@@ -79,7 +79,7 @@ const TRANSLATIONS = {
     audienceThinking: "Asking the audience...",
     doubleActive: "Double Answer Active! You have 2 chances.",
     time: "Time",
-    tutorialTitle: "Welcome to Globe Quiz Master!",
+    tutorialTitle: "Welcome to Country Puzzle!",
     tutorialDesc: "Test your geography skills by finding countries on the 3D globe. You have 4 lifelines (jokers) to help you:",
     jokerDoubleDesc: "Gives you 2 chances to pick the correct answer.",
     jokerFortyDesc: "Removes 2 incorrect options from the list.",
@@ -95,6 +95,48 @@ const TRANSLATIONS = {
     watchAd: "Watch Ad & Continue",
     adLoading: "Loading Advertisement...",
     welcomeBack: "Welcome back",
+    privacyPolicy: "Privacy Policy",
+    acceptPrivacy: "I have read and accept the privacy policy.",
+    privacyText: `Country Puzzle Privacy Policy
+Last Updated: 07.04.2026
+
+As Country Puzzle ("we", "us", or "our"), we attach the highest level of importance to the privacy and security of our users. This policy transparently explains how your data is processed while using our game.
+
+1. Information Collected and Processing
+Country Puzzle uses limited data to improve user experience and provide basic game functions:
+
+Local Data Storage: Your in-game progress, scores, and settings are stored entirely locally on your device. This data is not transferred to an external server by us.
+
+Third-Party Services: Our game uses the following structures to improve service quality:
+
+Google AdMob: Used for displaying advertisements within the game. AdMob may use device identifiers for ad personalization and analytics.
+
+Google Play Games: Used for achievements and leaderboards. If you choose to sign in to this service, your data will be subject to Google's own privacy policy.
+
+2. About Permissions and Access
+Some technical permissions may be requested by the system during the installation or use phase of the application. However, even if these permissions are granted, there is no access to any personal data outside the operation of the game. This is a general procedure; neither the user nor the game side will be negatively affected by these permission processes. Any data leakage or unauthorized access is strictly out of the question.
+
+3. Family Policy and Children's Privacy
+Country Puzzle is suitable for users of all ages, including children under 13. According to our family policies:
+
+We do not knowingly collect personal identification information from children.
+
+Ad content is presented through child-appropriate (family-friendly) ad networks and filtering.
+
+Parents can contact us for any questions regarding their children's data.
+
+4. Advertisements and Data Sharing
+Advertisements are displayed in our game through Google AdMob. Ad providers may process anonymized device IDs to offer you appropriate ads. Other than this, your data is never sold to third parties or shared for commercial purposes.
+
+5. User Rights and Data Deletion
+Our users have full control over their data. Since data is kept locally on your device, you can permanently delete all your game data by clearing the application's data or removing the application.
+
+You can contact us for your questions about data use or special data deletion requests.
+
+6. Contact
+For any questions, opinions, or data deletion requests regarding this Privacy Policy, you can contact us via the following e-mail address:
+
+E-mail: fersahalen@gmail.com`
   },
   tr: {
     loading: "Dünya Yükleniyor...",
@@ -121,7 +163,7 @@ const TRANSLATIONS = {
     audienceThinking: "Seyirciye soruluyor...",
     doubleActive: "Çift Cevap Aktif! 2 hakkınız var.",
     time: "Süre",
-    tutorialTitle: "Globe Quiz Master'a Hoş Geldiniz!",
+    tutorialTitle: "Country Puzzle'a Hoş Geldiniz!",
     tutorialDesc: "3D dünya üzerinde ülkeleri bularak coğrafya bilginizi test edin. Size yardımcı olacak 4 jokeriniz var:",
     jokerDoubleDesc: "Doğru cevabı bulmak için size 2 hak verir.",
     jokerFortyDesc: "Seçeneklerden 2 yanlış cevabı eler.",
@@ -137,6 +179,48 @@ const TRANSLATIONS = {
     watchAd: "Reklam İzle ve Devam Et",
     adLoading: "Reklam Yükleniyor...",
     welcomeBack: "Tekrar hoş geldin",
+    privacyPolicy: "Gizlilik Politikası",
+    acceptPrivacy: "Gizlilik politikasını okudum ve kabul ediyorum.",
+    privacyText: `Country Puzzle Gizlilik Politikası
+Son Güncelleme Tarihi: 07.04.2026
+
+Country Puzzle ("biz", "tarafımız" veya "bizim") olarak, kullanıcılarımızın gizliliğine ve güvenliğine en üst düzeyde önem veriyoruz. Bu politika, oyunumuzu kullanırken verilerinizin nasıl işlendiğini şeffaf bir şekilde açıklar.
+
+1. Toplanan Bilgiler ve İşleme
+Country Puzzle, kullanıcı deneyimini iyileştirmek ve temel oyun fonksiyonlarını sağlamak adına sınırlı veriler kullanır:
+
+Yerel Veri Saklama: Oyun içi ilerlemeleriniz, skorlarınız ve ayarlarınız tamamen yerel olarak cihazınızda saklanmaktadır. Bu veriler tarafımızca harici bir sunucuya aktarılmaz.
+
+Üçüncü Taraf Hizmetleri: Oyunumuz, hizmet kalitesini artırmak için aşağıdaki yapıları kullanır:
+
+Google AdMob: Oyun içinde reklam gösterimi amacıyla kullanılır. AdMob, reklam kişiselleştirme ve analiz için cihaz tanımlayıcılarını kullanabilir.
+
+Google Play Games: Başarımlar ve liderlik tabloları için kullanılır. Bu hizmete giriş yapmayı seçerseniz, verileriniz Google’ın kendi gizlilik politikasına tabi olur.
+
+2. İzinler ve Erişim Hakkında
+Uygulamanın yüklenmesi veya kullanılması aşamasında sistem tarafından bazı teknik izinler talep edilebilir. Ancak, bu izinler verilmiş olsa dahi, oyunun işleyişi dışında herhangi bir kişisel veriye erişim söz konusu değildir. Bu durum genel bir prosedürdür; ne kullanıcı ne de oyun tarafı bu izin süreçlerinden olumsuz bir şekilde etkilenmeyecektir. Herhangi bir veri sızıntısı veya izinsiz erişim kesinlikle söz konusu değildir.
+
+3. Aile Politikası ve Çocukların Gizliliği
+Country Puzzle, her yaştan kullanıcıya hitap etmekle birlikte 13 yaş altı çocuklar için de uygundur. Aile politikalarımız gereği:
+
+Çocuklardan bilerek kişisel kimlik bilgisi toplamıyoruz.
+
+Reklam içerikleri, çocuklara uygun (aile dostu) reklam ağları ve filtrelemeler üzerinden sunulur.
+
+Ebeveynler, çocuklarının verileriyle ilgili her türlü soru için bizimle iletişime geçebilir.
+
+4. Reklamlar ve Veri Paylaşımı
+Oyunumuzda Google AdMob aracılığıyla reklam gösterimi yapılmaktadır. Reklam sağlayıcılar, size uygun reklamlar sunabilmek için anonimleştirilmiş cihaz kimliklerini işleyebilir. Bunun dışında, verileriniz hiçbir şekilde üçüncü şahıslara satılmaz veya ticari amaçla paylaşılmaz.
+
+5. Kullanıcı Hakları ve Veri Silme
+Kullanıcılarımızın verileri üzerinde tam kontrol hakkı vardır. Veriler cihazınızda yerel olarak tutulduğu için, uygulamanın verilerini temizleyerek veya uygulamayı kaldırarak tüm oyun verilerinizi kalıcı olarak silebilirsiniz.
+
+Veri kullanımı hakkındaki sorularınız veya özel veri silme talepleriniz için bizimle iletişime geçebilirsiniz.
+
+6. İletişim
+Bu Gizlilik Politikası ile ilgili her türlü soru, görüş veya veri silme talepleriniz için aşağıdaki e-posta adresi üzerinden bizimle iletişime geçebilirsiniz:
+
+E-posta: fersahalen@gmail.com`
   }
 };
 
@@ -164,6 +248,8 @@ export default function App() {
   const [correctWithJokerCount, setCorrectWithJokerCount] = useState(0);
   const [nickname, setNickname] = useState('');
   const [isAdLoading, setIsAdLoading] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   // Lifelines state
   const [jokers, setJokers] = useState({
@@ -712,6 +798,7 @@ export default function App() {
     setIsGameActive(true);
     if (!keepNickname) {
       setNickname('');
+      setPrivacyAccepted(false);
       setShowTutorial(true);
       setIsGameActive(false);
     }
@@ -1078,16 +1165,93 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2 px-1">
+                  <input
+                    type="checkbox"
+                    id="privacy-check"
+                    checked={privacyAccepted}
+                    onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
+                  />
+                  <label htmlFor="privacy-check" className="text-[10px] text-slate-400 cursor-pointer select-none">
+                    {t.acceptPrivacy}{' '}
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setShowPrivacyModal(true);
+                      }}
+                      className="text-blue-400 hover:underline font-bold"
+                    >
+                      {t.privacyPolicy}
+                    </button>
+                  </label>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (!nickname.trim() || !privacyAccepted) return;
+                    setShowTutorial(false);
+                    setIsGameActive(true);
+                  }}
+                  disabled={!nickname.trim() || !privacyAccepted}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 rounded-2xl transition-all active:scale-95 shadow-lg shadow-blue-600/20"
+                >
+                  {t.startGame}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Privacy Policy Modal */}
+      <AnimatePresence>
+        {showPrivacyModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 z-[200]"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-slate-900 border border-slate-800 p-6 rounded-3xl max-w-2xl w-full max-h-[80vh] flex flex-col gap-4 shadow-2xl"
+            >
+              <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-4">
+                  <h2 className="text-xl font-black flex items-center gap-2">
+                    <HelpCircle size={20} className="text-blue-400" />
+                    {t.privacyPolicy}
+                  </h2>
+                  <button
+                    onClick={() => setLang(lang === 'en' ? 'tr' : 'en')}
+                    className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 flex items-center gap-1 hover:bg-slate-700 transition-colors"
+                  >
+                    <Languages size={14} className="text-blue-400" />
+                    <span className="text-[10px] font-bold uppercase">{lang === 'en' ? 'TR' : 'EN'}</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowPrivacyModal(false)}
+                  className="p-2 hover:bg-slate-800 rounded-full transition-colors"
+                >
+                  <XCircle size={24} className="text-slate-400" />
+                </button>
+              </div>
+              
+              <div className="overflow-y-auto pr-2 custom-scrollbar">
+                <div className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed font-sans">
+                  {t.privacyText}
+                </div>
+              </div>
+
               <button
-                onClick={() => {
-                  if (!nickname.trim()) return;
-                  setShowTutorial(false);
-                  setIsGameActive(true);
-                }}
-                disabled={!nickname.trim()}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3 rounded-2xl transition-all active:scale-95 shadow-lg shadow-blue-600/20"
+                onClick={() => setShowPrivacyModal(false)}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-2xl transition-all active:scale-95"
               >
-                {t.startGame}
+                {lang === 'tr' ? 'Kapat' : 'Close'}
               </button>
             </motion.div>
           </motion.div>
