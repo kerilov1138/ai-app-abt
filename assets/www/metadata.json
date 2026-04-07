@@ -1,5 +1,5 @@
 {
-  "name": "İnşaat Mühendisi & Müteahhit Asistanı",
-  "description": "Arsa bilgilerine dayanarak TAKS/KAKS hesabı yapan, çekme mesafelerini görselleştiren ve daire tipolojisi öneren profesyonel mühendislik aracı.",
+  "name": "Globe Quiz Master",
+  "description": "A standalone 3D globe geography game. No API keys or AI required. Works offline once loaded (requires internet only for initial map data).",
   "requestFramePermissions": []
 }

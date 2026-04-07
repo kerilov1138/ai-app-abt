@@ -1,0 +1,4 @@
+# Bu dosya bir APK dosyasi degildir. 
+# Android uygulamanizi olusturmak icin projenizi "Export to ZIP" yaparak 
+# android klasorunu Android Studio ile acip Gradle ile derlemeniz gerekmektedir.
+# Android 14+ uyumlulugu icin capacitor.config.ts ayarlarini kontrol edin.
