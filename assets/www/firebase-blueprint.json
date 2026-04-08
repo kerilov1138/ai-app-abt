@@ -1,0 +1,22 @@
+{
+  "entities": {
+    "Question": {
+      "title": "Question",
+      "description": "A word game question",
+      "type": "object",
+      "properties": {
+        "word": { "type": "string", "description": "The answer word" },
+        "definition": { "type": "string", "description": "The clue for the word" },
+        "length": { "type": "number", "description": "Number of letters" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["word", "definition", "length"]
+    }
+  },
+  "firestore": {
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of game questions"
+    }
+  }
+}
