@@ -33,8 +33,50 @@ flutter:
   assets:
     - assets/splash_logo.png # SPLASH
     - assets/www/ # STATIC
+    - assets/www/android/ # STATIC
+    - assets/www/android/app/ # STATIC
+    - assets/www/android/app/src/ # STATIC
+    - assets/www/android/app/src/androidTest/ # STATIC
+    - assets/www/android/app/src/androidTest/java/ # STATIC
+    - assets/www/android/app/src/androidTest/java/com/ # STATIC
+    - assets/www/android/app/src/androidTest/java/com/getcapacitor/ # STATIC
+    - assets/www/android/app/src/androidTest/java/com/getcapacitor/myapp/ # STATIC
+    - assets/www/android/app/src/main/ # STATIC
+    - assets/www/android/app/src/main/java/ # STATIC
+    - assets/www/android/app/src/main/java/com/ # STATIC
+    - assets/www/android/app/src/main/java/com/worldquiz/ # STATIC
+    - assets/www/android/app/src/main/java/com/worldquiz/app/ # STATIC
+    - assets/www/android/app/src/main/res/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-land-hdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-land-mdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-land-xhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-land-xxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-land-xxxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-port-hdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-port-mdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-port-xhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-port-xxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-port-xxxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/drawable-v24/ # STATIC
+    - assets/www/android/app/src/main/res/drawable/ # STATIC
+    - assets/www/android/app/src/main/res/layout/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-anydpi-v26/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-hdpi/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-mdpi/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-xhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-xxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/mipmap-xxxhdpi/ # STATIC
+    - assets/www/android/app/src/main/res/values/ # STATIC
+    - assets/www/android/app/src/main/res/xml/ # STATIC
+    - assets/www/android/app/src/test/ # STATIC
+    - assets/www/android/app/src/test/java/ # STATIC
+    - assets/www/android/app/src/test/java/com/ # STATIC
+    - assets/www/android/app/src/test/java/com/getcapacitor/ # STATIC
+    - assets/www/android/app/src/test/java/com/getcapacitor/myapp/ # STATIC
+    - assets/www/android/gradle/ # STATIC
+    - assets/www/android/gradle/wrapper/ # STATIC
+    - assets/www/public/ # STATIC
+    - assets/www/public/downloads/ # STATIC
     - assets/www/src/ # STATIC
-    - assets/www/src/components/ # STATIC
-    - assets/www/src/hooks/ # STATIC
-    - assets/www/src/services/ # STATIC
+    - assets/www/src/lib/ # STATIC
     # END ASSETS
