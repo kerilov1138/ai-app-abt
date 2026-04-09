@@ -59,13 +59,13 @@ jobs:
           validate-wrappers: false # Web assets iÃ§indeki geÃ§ersiz jar'larÄ±n hata vermesini engeller
 
       - name: Build with Gradle
-        run: gradle assembleRelease
+        run: gradle assembleDebug
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: app/build/outputs/apk/release/*.apk
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -74,7 +74,7 @@ jobs:
           name: App Release v1.0.0
           draft: false
           prerelease: false
-          files: app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/debug/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
