@@ -46,11 +46,14 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
+      - name: Cleanup rogue Gradle files in assets
+        run: find assets/www -name "gradle" -type d -exec rm -rf {} + || true
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-          wrapper-validation-enabled: false # Web assets iÃ§indeki geÃ§ersiz jar'larÄ±n hata vermesini engeller
+          validate-wrappers: false # Web assets iÃ§indeki geÃ§ersiz jar'larÄ±n hata vermesini engeller
 
       - name: Build with Gradle
         run: gradle assembleRelease
