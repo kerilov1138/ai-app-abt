@@ -12,9 +12,16 @@ body {
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-/* Flutter-like smooth transitions */
-* {
-  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+/* Optimized transitions - Avoid universal transitions on expensive properties like filter/backdrop-filter */
+.transition-standard {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 300ms;
+}
+
+/* Specific transition for expensive properties */
+.transition-effects {
+  transition-property: filter, backdrop-filter;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 300ms;
 }
@@ -60,6 +67,7 @@ body {
   height: 100%;
   transition: transform 0.6s;
   transform-style: preserve-3d;
+  will-change: transform; /* GPU Hint */
 }
 
 .hexagon-front, .hexagon-back {

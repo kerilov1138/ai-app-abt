@@ -16,15 +16,14 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20 # Daha kararlÄ± LTS sÃ¼rÃ¼mÃ¼
+          node-version: 24
       
       - name: Auto-Build Web Content (Source to Build)
         run: |
-          cd app/src/main/assets/www
+          cd assets/www
           if [ -f "package.json" ]; then
             echo "package.json detected. Running cloud build..."
             npm install
@@ -34,38 +33,71 @@ jobs:
             for folder in dist build out web-build; do
               if [ -d "$folder" ]; then
                 echo "Found build folder: $folder"
-                # Move build result to root of app/src/main/assets/www
+                # Move build result to root of assets/www
                 mv "$folder"/* . 
                 break
               fi
             done
+          else
+            echo "No package.json found. Mirroring assets directly."
           fi
-          cd ../../../../../..
+          cd ../..
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
+      - name: Setup Java 21 (Latest LTS)
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
-          cache: 'gradle'
-
-      - name: Cleanup rogue Gradle files in assets
-        run: find assets/www -name "gradle" -type d -exec rm -rf {} + || true
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          
+      - uses: subosito/flutter-action@v2
         with:
-          gradle-version: 8.7
-          validate-wrappers: false # Web assets iÃ§indeki geÃ§ersiz jar'larÄ±n hata vermesini engeller
+          channel: 'stable'
 
-      - name: Build with Gradle
-        run: gradle assembleDebug
+      - name: Initialize Flutter Project
+        run: |
+          # Use dynamic org to ensure unique package IDs (different apps)
+          flutter create . --platforms=android --org com.kelime_oyunu
+          rm -rf test 
+      
+      - name: Dynamic Asset Mapper (Register Global Assets)
+        run: |
+          echo "Scanning for production assets in assets/www..."
+          # Find directories, excluding dev artifacts and already registered ones
+          FOLDERS=$(find assets/www -maxdepth 4 -type d \
+            ! -path "*/node_modules*" \
+            ! -path "*/.git*" \
+            ! -path "*/.next*" \
+            ! -name "." \
+            ! -name "www")
+          
+          # We use a temp file to build the new list safely
+          touch assets_to_add.txt
+          for folder in $FOLDERS; do
+            clean_folder="${folder//\\//}" # Fix slashes
+            if ! grep -q "$clean_folder/" pubspec.yaml; then
+              echo "    - $clean_folder/ # CLOUD-MAPPED" >> assets_to_add.txt
+            fi
+          done
+          
+          if [ -s assets_to_add.txt ]; then
+            echo "Adding new assets to pubspec.yaml..."
+            # Insert the content of assets_to_add.txt BEFORE the '# END ASSETS' marker
+            sed -i "/# END ASSETS/r assets_to_add.txt" pubspec.yaml
+          fi
+          
+          echo "Final pubspec.yaml assets section:"
+          grep -A 50 "assets:" pubspec.yaml
 
+      - run: flutter pub get
+      - name: Create Native Splash
+        run: dart run flutter_native_splash:create
+      - run: flutter build apk --release
+      
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -74,7 +106,7 @@ jobs:
           name: App Release v1.0.0
           draft: false
           prerelease: false
-          files: app/build/outputs/apk/debug/*.apk
+          files: build/app/outputs/flutter-apk/app-release.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
