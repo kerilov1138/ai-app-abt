@@ -24,7 +24,7 @@ jobs:
       
       - name: Auto-Build Web Content (Source to Build)
         run: |
-          cd assets/www
+          cd app/src/main/assets/www
           if [ -f "package.json" ]; then
             echo "package.json detected. Running cloud build..."
             npm install
@@ -34,13 +34,13 @@ jobs:
             for folder in dist build out web-build; do
               if [ -d "$folder" ]; then
                 echo "Found build folder: $folder"
-                # Move build result to root of assets/www
+                # Move build result to root of app/src/main/assets/www
                 mv "$folder"/* . 
                 break
               fi
             done
           fi
-          cd ../..
+          cd ../../../../../..
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
