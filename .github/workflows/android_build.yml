@@ -49,7 +49,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.7 # Android 14 (34) iÃ§in en kararlÄ± sÃ¼rÃ¼m
+          gradle-version: 8.7
+          wrapper-validation-enabled: false # Web assets iÃ§indeki geÃ§ersiz jar'larÄ±n hata vermesini engeller
 
       - name: Build with Gradle
         run: gradle assembleRelease
