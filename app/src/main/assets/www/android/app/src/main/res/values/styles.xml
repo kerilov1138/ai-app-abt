@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#0a0a20</item>
+        <item name="colorPrimaryDark">#0a0a20</item>
+        <item name="colorAccent">#1e3a8a</item>
+    </style>
+
+    <!-- Splash Screen Theme -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Splash screen background color -->
+        <item name="windowSplashScreenBackground">#0a0a20</item>
+        <!-- Icon to be shown in the center -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- Theme to switch to after the splash screen is dismissed -->
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
+</resources>

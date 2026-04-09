@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Modern Android 12+ Splash Screen TemasÄ± -->
+    <style name="Theme.AppSplashScreen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#1e1e1e</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.Default</item>
+    </style>
+
+    <!-- Uygulama Ana TemasÄ± -->
+    <style name="Theme.Default" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">#1e1e1e</item>
+        <item name="android:navigationBarColor">#1e1e1e</item>
+    </style>
+</resources>

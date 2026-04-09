@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -38,66 +39,27 @@ jobs:
                 break
               fi
             done
-          else
-            echo "No package.json found. Mirroring assets directly."
           fi
           cd ../..
 
-      - name: Setup Java 21 (Latest LTS)
+      - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
-          java-version: '21'
-          
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
+          java-version: '17'
+          cache: 'gradle'
 
-      - name: Initialize Flutter Project
-        run: |
-          # Use dynamic org to ensure unique package IDs (different apps)
-          flutter create . --platforms=android --org com.kelime_oyunu
-          rm -rf test 
-      
-      - name: Dynamic Asset Mapper (Register Global Assets)
-        run: |
-          echo "Scanning for production assets in assets/www..."
-          # Find directories, excluding dev artifacts and already registered ones
-          FOLDERS=$(find assets/www -maxdepth 4 -type d \
-            ! -path "*/node_modules*" \
-            ! -path "*/.git*" \
-            ! -path "*/.next*" \
-            ! -name "." \
-            ! -name "www")
-          
-          # We use a temp file to build the new list safely
-          touch assets_to_add.txt
-          for folder in $FOLDERS; do
-            clean_folder="${folder//\\//}" # Fix slashes
-            if ! grep -q "$clean_folder/" pubspec.yaml; then
-              echo "    - $clean_folder/ # CLOUD-MAPPED" >> assets_to_add.txt
-            fi
-          done
-          
-          if [ -s assets_to_add.txt ]; then
-            echo "Adding new assets to pubspec.yaml..."
-            # Insert the content of assets_to_add.txt BEFORE the '# END ASSETS' marker
-            sed -i "/# END ASSETS/r assets_to_add.txt" pubspec.yaml
-          fi
-          
-          echo "Final pubspec.yaml assets section:"
-          grep -A 50 "assets:" pubspec.yaml
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-      - run: flutter pub get
-      - name: Create Native Splash
-        run: dart run flutter_native_splash:create
-      - run: flutter build apk --release
-      
+      - name: Build with Gradle
+        run: ./gradlew assembleRelease
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
           name: app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app/build/outputs/apk/release/app-release.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -106,7 +68,7 @@ jobs:
           name: App Release v1.0.0
           draft: false
           prerelease: false
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

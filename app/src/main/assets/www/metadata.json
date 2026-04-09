@@ -1,0 +1,5 @@
+{
+  "name": "Kelime Oyunu AI",
+  "description": "TV2'deki Kelime Oyunu yarışmasının sesli komutlarla oynanabilen AI sunuculu versiyonu.",
+  "requestFramePermissions": ["microphone"]
+}
