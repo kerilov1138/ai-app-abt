@@ -9,10 +9,20 @@ import { speakText, playRevealSound } from '../services/aiService';
 import { db } from '../firebase';
 import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 
+/**
+ * ANDROID / JAVA COMPATIBILITY NOTE:
+ * This application is built as a Progressive Web App (PWA).
+ * It is fully compatible with Android WebViews (Android 5.0+).
+ * For native Android integration (Java 20 / Kotlin), this app can be wrapped 
+ * using tools like Capacitor, Cordova, or a custom WebView Activity.
+ * The UI is designed using Flutter-inspired responsive principles.
+ */
+
 const INITIAL_TIME = 240; // 4 minutes
 const ANSWER_TIME = 5; // 5 seconds to answer after stopping
 
 export default function GameBoard() {
+  const [isAppReady, setIsAppReady] = useState(false);
   const [gameQuestions, setGameQuestions] = useState<Question[]>([]);
   const [customQuestions, setCustomQuestions] = useState<Question[]>([]);
   const [showInstructions, setShowInstructions] = useState(false);
@@ -352,9 +362,55 @@ export default function GameBoard() {
     }
   }, [handleHarfLutfen, handleStop, handleAnswer]);
 
-  const { isListening, error: speechError } = useSpeechRecognition(onCommand);
+  const { isListening, error: speechError } = useSpeechRecognition(onCommand, gameStarted && !gameState.isGameOver);
+
+  // App Initialization
+  useEffect(() => {
+    const init = async () => {
+      // Simulate a professional splash screen delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsAppReady(true);
+    };
+    init();
+  }, []);
+
+  if (!isAppReady) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0a0a20] text-white">
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className="flex flex-col items-center space-y-8"
+        >
+          <div className="relative">
+            <div className="w-24 h-24 md:w-32 md:h-32 bg-blue-600 rounded-[2rem] shadow-[0_0_50px_rgba(37,99,235,0.3)] flex items-center justify-center animate-pulse">
+              <HelpCircle size={48} className="md:w-16 md:h-16 text-white" />
+            </div>
+            <div className="absolute -inset-4 border-4 border-blue-500/20 rounded-[2.5rem] animate-[spin_10s_linear_infinite]" />
+          </div>
+          <div className="text-center">
+            <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-blue-400 mb-2">KELİME OYUNU</h1>
+            <div className="flex items-center justify-center gap-2 text-blue-500/60 font-mono text-sm uppercase tracking-widest">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
+              Sistem Hazırlanıyor
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   const startGame = async () => {
+    // Explicitly request microphone permission to ensure prompt on mobile
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.error("Microphone permission denied:", err);
+      alert("Oyunu sesli komutlarla oynamak için mikrofon izni vermeniz gerekmektedir.");
+      return;
+    }
+
     // Combine static pool with custom questions from Firebase
     const fullPool = [...QUESTIONS_POOL, ...customQuestions];
     
@@ -412,19 +468,21 @@ export default function GameBoard() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center space-y-8 max-w-2xl"
         >
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tighter text-blue-400">KELİME OYUNU</h1>
-          <p className="text-lg md:text-xl text-gray-400 px-4">
+          <h1 className="text-4xl md:text-7xl font-black tracking-tighter text-blue-400 drop-shadow-2xl">KELİME OYUNU</h1>
+          <p className="text-lg md:text-2xl text-gray-400 px-6 max-w-xl mx-auto leading-relaxed">
             Efsane yarışma artık sesinizle kontrolünüzde. 
             "Harf alayım" diyerek harf alabilir, "Cevap veriyorum" diyerek süreyi durdurup cevabınızı söyleyebilirsiniz.
           </p>
-          <button 
-            onClick={startGame}
-            className="group relative px-8 md:px-12 py-4 md:py-6 bg-blue-600 hover:bg-blue-500 rounded-full text-xl md:text-2xl font-bold transition-all hover:scale-105 active:scale-95 shadow-[0_0_30px_rgba(37,99,235,0.4)]"
-          >
-            <span className="flex items-center gap-3">
-              <Play size={20} className="md:w-6 md:h-6 fill-current" /> YARIŞMAYI BAŞLAT
-            </span>
-          </button>
+          <div className="pt-8">
+            <button 
+              onClick={startGame}
+              className="group relative px-10 md:px-16 py-5 md:py-8 bg-blue-600 hover:bg-blue-500 rounded-[2rem] text-xl md:text-3xl font-black transition-all hover:scale-105 active:scale-95 shadow-[0_20px_50px_rgba(37,99,235,0.4)] border-b-8 border-blue-800"
+            >
+              <span className="flex items-center gap-4">
+                <Play size={24} className="md:w-10 md:h-10 fill-current" /> YARIŞMAYI BAŞLAT
+              </span>
+            </button>
+          </div>
 
           <div className="flex flex-wrap gap-4 md:gap-6 mt-8 justify-center">
             <button 
@@ -725,22 +783,22 @@ export default function GameBoard() {
   return (
     <div className="flex flex-col min-h-screen bg-[#0a0a20] text-white p-4 md:p-8 font-sans">
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 md:mb-12">
-        <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 md:gap-6">
-          <div className="bg-blue-900/40 border border-blue-500/30 p-3 md:p-4 rounded-2xl backdrop-blur-sm min-w-[120px]">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 md:mb-16">
+        <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 md:gap-8">
+          <div className="bg-blue-900/40 border-2 border-blue-500/30 p-4 md:p-6 rounded-[2rem] backdrop-blur-xl min-w-[140px] shadow-2xl">
             <div className="flex items-center gap-2 text-blue-400 mb-1">
-              <Trophy size={16} className="md:w-5 md:h-5" />
-              <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest">Puan</span>
+              <Trophy size={18} className="md:w-6 md:h-6" />
+              <span className="text-[10px] md:text-sm font-black uppercase tracking-widest">Puan</span>
             </div>
-            <div className="text-2xl md:text-4xl font-mono font-bold">{gameState.totalScore}</div>
+            <div className="text-3xl md:text-5xl font-mono font-black text-white">{gameState.totalScore}</div>
           </div>
           
-          <div className={`p-3 md:p-4 rounded-2xl border transition-colors min-w-[120px] ${gameState.timeLeft < 30 ? 'bg-red-900/40 border-red-500/50' : 'bg-blue-900/40 border-blue-500/30'}`}>
+          <div className={`p-4 md:p-6 rounded-[2rem] border-2 transition-all duration-500 min-w-[140px] shadow-2xl ${gameState.timeLeft < 30 ? 'bg-red-900/40 border-red-500/50 animate-pulse' : 'bg-blue-900/40 border-blue-500/30'}`}>
             <div className="flex items-center gap-2 text-blue-400 mb-1">
-              <Timer size={16} className="md:w-5 md:h-5" />
-              <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest">Süre</span>
+              <Timer size={18} className="md:w-6 md:h-6" />
+              <span className="text-[10px] md:text-sm font-black uppercase tracking-widest">Süre</span>
             </div>
-            <div className="text-2xl md:text-4xl font-mono font-bold">
+            <div className="text-3xl md:text-5xl font-mono font-black text-white">
               {Math.floor(gameState.timeLeft / 60)}:{(gameState.timeLeft % 60).toString().padStart(2, '0')}
             </div>
           </div>

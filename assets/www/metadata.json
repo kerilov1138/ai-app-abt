@@ -1,5 +1,5 @@
 {
-  "name": "Country Puzzle",
-  "description": "A standalone 3D globe geography game. No API keys or AI required. Works offline once loaded (requires internet only for initial map data).",
-  "requestFramePermissions": []
+  "name": "Kelime Oyunu AI",
+  "description": "TV2'deki Kelime Oyunu yarışmasının sesli komutlarla oynanabilen AI sunuculu versiyonu.",
+  "requestFramePermissions": ["microphone"]
 }

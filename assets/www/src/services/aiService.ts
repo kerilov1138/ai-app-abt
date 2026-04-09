@@ -21,13 +21,17 @@ export async function generateHostResponse(prompt: string, context: string) {
 
 export async function speakText(text: string): Promise<boolean> {
   if (!('speechSynthesis' in window)) {
-    console.error("Speech synthesis not supported");
+    console.warn("Speech synthesis not supported");
     return false;
   }
 
   return new Promise((resolve) => {
     // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+    } catch (e) {
+      // Ignore cancel errors
+    }
 
     // Phonetic replacements for more natural Turkish pronunciation
     let phoneticText = text;
@@ -52,11 +56,16 @@ export async function speakText(text: string): Promise<boolean> {
 
     utterance.onend = () => resolve(true);
     utterance.onerror = (event) => {
-      console.error("SpeechSynthesis error:", event);
+      console.warn("SpeechSynthesis error:", event);
       resolve(false);
     };
 
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.error("Failed to speak:", e);
+      resolve(false);
+    }
   });
 }
 
