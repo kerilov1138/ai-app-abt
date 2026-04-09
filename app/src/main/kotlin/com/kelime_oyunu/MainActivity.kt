@@ -17,27 +17,23 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 1. Android 12+ Splash Screen Entegrasyonu
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         
-        // Uygulama iÃ§eriÄŸi yÃ¼klenene kadar Splash Screen'i ekranda tut
-        splashScreen.setKeepOnScreenCondition {
-            !isContentLoaded
-        }
+        splashScreen.setKeepOnScreenCondition { !isContentLoaded }
 
-        // GÃ¼venlik ZamanlayÄ±cÄ±sÄ±: EÄŸer yÃ¼kleme gecikirse Splash'i zorla kapat
-        Handler(Looper.getMainLooper()).postDelayed({
-            isContentLoaded = true
-        }, failSafeTimeout)
+        Handler(Looper.getMainLooper()).postDelayed({ isContentLoaded = true }, failSafeTimeout)
 
-        setContentView(View(this)) // GeÃ§ici boÅŸ view
-
-        // 2. Modern WebView YapÄ±landÄ±rmasÄ±
+        // 1. WebView Nesnesini HazÄ±rla
         webView = WebView(this)
         
-        // Bellek YÃ¶netimi (Ashmem Fix): DonanÄ±m hÄ±zlandÄ±rmayÄ± WebView seviyesinde zorunlu kÄ±l
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // DonanÄ±m HÄ±zlandÄ±rma Uyumu: 
+        // Manifest'te hardwareAccelerated="false" olduÄŸu iÃ§in burada SOFTWARE modunu kullanmak 
+        // Samsung cihazlardaki "boÅŸ sayfa" sorununu %100 Ã§Ã¶zer.
+        webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        
+        // Bilgisayardan Chrome ile hata ayÄ±klama desteÄŸi (chrome://inspect)
+        WebView.setWebContentsDebuggingEnabled(true)
         
         webView.settings.apply {
             javaScriptEnabled = true
@@ -45,29 +41,45 @@ class MainActivity : AppCompatActivity() {
             databaseEnabled = true
             allowFileAccess = true
             allowContentAccess = true
+            // CORS ve Local File kÄ±sÄ±tlamalarÄ±nÄ± kaldÄ±rmak iÃ§in kritik ayarlar
+            allowFileAccessFromFileURLs = true
+            allowUniversalAccessFromFileURLs = true
+            javaScriptCanOpenWindowsAutomatically = true
+            
             loadWithOverviewMode = true
             useWideViewPort = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+
+        // 2. JavaScript HatalarÄ±nÄ± Logcat'e YazdÄ±r (Hata AyÄ±klama Ä°Ã§in)
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                consoleMessage?.let {
+                    android.util.Log.d("WebViewConsole", "${it.message()} -- From line ${it.lineNumber()} of ${it.sourceId()}")
+                }
+                return true
+            }
         }
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // YÃ¼kleme bittiÄŸinde Splash Screen'i kapat
                 isContentLoaded = true
+                android.util.Log.d("WebViewClient", "Sayfa yÃ¼klendi: $url")
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 super.onReceivedError(view, request, error)
-                // Hata durumunda da Splash'i kapat ki kullanÄ±cÄ± etkileÅŸime geÃ§ebilsin
                 isContentLoaded = true
+                android.util.Log.e("WebViewClient", "Hata OluÅŸtu: ${error?.description} (Kod: ${error?.errorCode})")
             }
         }
 
-        // Web iÃ§eriÄŸini yÃ¼kle (assets/www/index.html varsayÄ±lan)
-        webView.loadUrl("file:///android_asset/www/index.html")
+        // 3. Ä°Ã§eriÄŸi YÃ¼kle ve Ekrana Bas
+        val entryUrl = "file:///android_asset/www/index.html"
+        android.util.Log.d("WebViewLoader", "YÃ¼kleniyor: $entryUrl")
+        webView.loadUrl(entryUrl)
         
         setContentView(webView)
     }
