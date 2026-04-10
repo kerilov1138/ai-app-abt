@@ -3,10 +3,12 @@ package com.kelimeoyunu.ai
 import android.os.Bundle
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.webkit.WebViewAssetLoader
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -19,12 +21,17 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         // Splash screen'in ne kadar süre kalacağını kontrol eder
-        // İçerik hazır olana kadar splash screen'i tutar
         splashScreen.setKeepOnScreenCondition { !isContentReady }
 
         webView = WebView(this)
         
-        // WebView Ayarları - Modern bellek yönetimi ve performans için
+        // WebViewAssetLoader Yapılandırması
+        // Yerel dosyaları güvenli bir https:// domaini üzerinden yükler.
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        // WebView Ayarları
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -34,14 +41,25 @@ class MainActivity : AppCompatActivity() {
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
         
-        // Donanım hızlandırma ayarları - Ashmem hatalarını önlemek için
-        // Android Q+ için modern çizim yöntemlerini kullanmaya zorlar
+        // Güvenlik Ayarları
+        @Suppress("DEPRECATION")
+        settings.allowFileAccessFromFileURLs = true
+        @Suppress("DEPRECATION")
+        settings.allowUniversalAccessFromFileURLs = true
+        
+        // Donanım hızlandırma - Performans için tekrar aktif edildi
         webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                return assetLoader.shouldInterceptRequest(request.url)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Sayfa yüklendiğinde splash screen'i kaldır
                 isContentReady = true
             }
 
@@ -51,17 +69,16 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-                // Hata durumunda da splash screen'de takılı kalmamak için içeriği "hazır" işaretle
                 isContentReady = true
             }
         }
 
         setContentView(webView)
         
-        // Uygulama URL'sini yükle
-        webView.loadUrl("https://ais-dev-5w2s42u6inuhtstn2exau4-26636727861.europe-west2.run.app")
+        // Uygulamayı yerel assets üzerinden yükle (Production Modu)
+        webView.loadUrl("https://appassets.androidplatform.net/index.html")
         
-        // Güvenlik önlemi: Eğer 5 saniye içinde sayfa yüklenmezse splash screen'i zorla kapat
+        // Güvenlik önlemi: Splash screen zaman aşımı
         webView.postDelayed({
             isContentReady = true
         }, 5000)
