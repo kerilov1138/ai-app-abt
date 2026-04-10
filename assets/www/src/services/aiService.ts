@@ -1,8 +1,17 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  if (!aiInstance) aiInstance = new GoogleGenAI({ apiKey });
+  return aiInstance;
+}
 
 export async function generateHostResponse(prompt: string, context: string) {
+  const ai = getAI();
+  if (!ai) return "Harika gidiyorsun!";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",

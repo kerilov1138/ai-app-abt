@@ -47,6 +47,7 @@ flutter:
     - assets/www/android/app/src/main/res/values/ # STATIC
     - assets/www/android/gradle/ # STATIC
     - assets/www/android/gradle/wrapper/ # STATIC
+    - assets/www/lib/ # STATIC
     - assets/www/public/ # STATIC
     - assets/www/src/ # STATIC
     - assets/www/src/components/ # STATIC

@@ -1,0 +1,68 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js 24
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+
+    - name: Setup Java 21 (Zulu)
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'zulu'
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+
+    - name: Build Web Assets (Vite)
+      run: |
+        npm install
+        npm run build
+
+    - name: Prepare Assets for Flutter
+      run: |
+        # Create assets/www directory if it doesn't exist
+        mkdir -p assets/www
+        # Copy built web files to Flutter assets
+        cp -r dist/* assets/www/
+        
+        # Ensure index.html is at the root of assets/www
+        if [ ! -f "assets/www/index.html" ]; then
+          echo "Error: index.html not found in dist/"
+          exit 1
+        fi
+
+    - name: Ensure Flutter Project Structure
+      run: |
+        # If android folder doesn't exist, create it
+        if [ ! -d "android" ]; then
+          flutter create . --platforms=android --org com.kelime_oyunu
+        fi
+
+    - name: Install Flutter Dependencies
+      run: flutter pub get
+
+    - name: Build APK
+      run: flutter build apk --release --no-tree-shake-icons
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release
+        path: build/app/outputs/flutter-apk/app-release.apk
