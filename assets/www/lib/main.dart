@@ -42,6 +42,12 @@ class _WebViewPageState extends State<WebViewPage> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF0A0A20))
+      ..addJavaScriptChannel(
+        'ConsoleLog',
+        onMessageReceived: (JavaScriptMessage message) {
+          debugPrint('JS: ${message.message}');
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
@@ -65,12 +71,12 @@ class _WebViewPageState extends State<WebViewPage> {
       )
       ..loadFlutterAsset('assets/www/index.html');
 
-    if (Platform.isAndroid) {
-      final androidController = _controller.platform as AndroidWebViewController;
-      androidController.setMediaPlaybackRequiresUserGesture(false);
-      // Dosya erişimi ve DOM storage için ek ayarlar
-      // Flutter WebView 4.x+ bu ayarları otomatik yönetir ancak 
-      // bazen platform özelinde zorlamak gerekebilir.
+    // Platform specific settings
+    final platform = _controller.platform;
+    if (platform is AndroidWebViewController) {
+      platform.setMediaPlaybackRequiresUserGesture(false);
+      // Ensure file and DOM storage access
+      platform.setGeolocatableOptions(const AndroidGeolocatableOptions(enabled: true));
     }
   }
 
