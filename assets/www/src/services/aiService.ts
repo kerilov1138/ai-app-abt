@@ -1,78 +1,97 @@
-import { GoogleGenAI } from "@google/genai";
+// Local response pool to replace AI
+const HOST_RESPONSES = {
+  correct: [
+    "Harika! Tam üstüne bastınız.",
+    "Efendim muazzam bir cevap!",
+    "Tebrikler, puanlar hanenize yazıldı.",
+    "İşte budur! Kelimeyi şak diye buldunuz.",
+    "Bravo! Bir sonraki soruya geçelim mi?"
+  ],
+  wrong: [
+    "Maalesef, bu sefer olmadı.",
+    "Hay aksi! Doğru cevap burnumuzun ucundaydı.",
+    "Üzülmeyin, bir sonraki soruda telafi ederiz.",
+    "Sağlık olsun, puanları geri aldık ama moral bozmak yok.",
+    "Ah, çok yakındınız ama tam olarak o değildi."
+  ],
+  letter: [
+    "Buyursunlar bir harf.",
+    "İşte bir ipucu daha.",
+    "Bir harf daha açtık, bakalım şimdi ne olacak?",
+    "Harf geldi, işler kolaylaşıyor mu?",
+    "Puanınızdan biraz feda ettik ama harfimiz geldi."
+  ],
+  welcome: [
+    "Kelime Oyunu'na hoş geldiniz! Ben sunucunuz, hazırsanız başlayalım.",
+    "Efendim merhabalar! Yeni bir yarışma, yeni heyecanlar.",
+    "Ekran başındakiler ve siz hazırsanız, ilk sorumuz geliyor!"
+  ]
+};
 
-let aiInstance: GoogleGenAI | null = null;
-
-function getAI() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!aiInstance) aiInstance = new GoogleGenAI({ apiKey });
-  return aiInstance;
+function getRandomResponse(type: keyof typeof HOST_RESPONSES) {
+  const responses = HOST_RESPONSES[type];
+  return responses[Math.floor(Math.random() * responses.length)];
 }
 
-export async function generateHostResponse(prompt: string, context: string) {
-  const ai = getAI();
-  if (!ai) return "Harika gidiyorsun!";
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Sen bir TV yarışma programı sunucususun (Ali İhsan Varol gibi). 
-      Yarışma: Kelime Oyunu.
-      Bağlam: ${context}
-      Kullanıcı: ${prompt}
-      Kısa, esprili ve teşvik edici bir cevap ver.`,
-    });
-    return response.text;
-  } catch (error) {
-    console.error("AI Response Error:", error);
-    return "Harika gidiyorsun!";
+export async function generateHostResponse(type: 'correct' | 'wrong' | 'letter' | 'welcome', context?: string) {
+  // No more API calls, completely local and fast
+  return getRandomResponse(type);
+}
+
+let turkishVoice: SpeechSynthesisVoice | null = null;
+
+// Function to find the best Turkish voice on the system
+function findTurkishVoice() {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  
+  const voices = window.speechSynthesis.getVoices();
+  // Priority 1: Local Turkish voice (embedded in OS)
+  // Priority 2: Any Turkish voice
+  const voice = voices.find(v => v.lang.startsWith('tr') && v.localService) || 
+                voices.find(v => v.lang.startsWith('tr'));
+  
+  if (voice) {
+    turkishVoice = voice;
+  }
+  return turkishVoice;
+}
+
+// Initialize voices
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  window.speechSynthesis.getVoices();
+  if (window.speechSynthesis.onvoiceschanged !== undefined) {
+    window.speechSynthesis.onvoiceschanged = findTurkishVoice;
   }
 }
 
 export async function speakText(text: string): Promise<boolean> {
   if (!('speechSynthesis' in window)) {
-    console.warn("Speech synthesis not supported");
     return false;
   }
 
   return new Promise((resolve) => {
-    // Cancel any ongoing speech
     try {
       window.speechSynthesis.cancel();
-    } catch (e) {
-      // Ignore cancel errors
+    } catch (e) {}
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Use the best found Turkish voice
+    const voice = findTurkishVoice();
+    if (voice) {
+      utterance.voice = voice;
     }
-
-    // Phonetic replacements for more natural Turkish pronunciation
-    let phoneticText = text;
-    const phoneticMap: { [key: string]: string } = {
-      "DAİRE": "DAYRE",
-      "ABİDE": "AABİDE",
-      "daire": "dayre",
-      "abide": "aabide",
-      "Daire": "Dayre",
-      "Abide": "Aabide"
-    };
-
-    Object.keys(phoneticMap).forEach(key => {
-      const regex = new RegExp(`\\b${key}\\b`, 'gi');
-      phoneticText = phoneticText.replace(regex, phoneticMap[key]);
-    });
-
-    const utterance = new SpeechSynthesisUtterance(phoneticText);
+    
     utterance.lang = 'tr-TR';
-    utterance.rate = 1.0;
+    utterance.rate = 1.05; // Slightly faster for a more natural TV host feel
     utterance.pitch = 1.0;
 
     utterance.onend = () => resolve(true);
-    utterance.onerror = (event) => {
-      console.warn("SpeechSynthesis error:", event);
-      resolve(false);
-    };
+    utterance.onerror = () => resolve(false);
 
     try {
       window.speechSynthesis.speak(utterance);
     } catch (e) {
-      console.error("Failed to speak:", e);
       resolve(false);
     }
   });

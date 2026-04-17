@@ -5,7 +5,7 @@ import { Timer, Trophy, HelpCircle, Play, RotateCcw, X, Info, Users, Mic, MicOff
 import { Question, GameState } from '../types';
 import { QUESTIONS_POOL } from '../constants';
 import { useSpeechRecognition } from '../hooks/useSpeech';
-import { speakText, playRevealSound } from '../services/aiService';
+import { generateHostResponse, speakText, playRevealSound } from '../services/aiService';
 
 /**
  * ANDROID / JAVA COMPATIBILITY NOTE:
@@ -40,6 +40,12 @@ export default function GameBoard() {
     isAnswerTimerRunning: false,
     answerTimeLeft: ANSWER_TIME,
     totalScore: 0,
+  });
+
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(false);
+  const [highScore, setHighScore] = useState<number>(() => {
+    const saved = localStorage.getItem('kelime_oyunu_high_score');
+    return saved ? parseInt(saved, 10) : 0;
   });
 
   const gameStateRef = useRef(gameState);
@@ -85,15 +91,17 @@ export default function GameBoard() {
     const triggerQuestion = async () => {
       if (gameStarted && !gameState.isGameOver && !gameState.isAnswering && currentQuestion) {
         setGameState(prev => ({ ...prev, isTimerRunning: true }));
+        // Speak the definition directly
         await speak(currentQuestion.definition, false);
       }
     };
     triggerQuestion();
   }, [gameState.currentQuestionIndex, gameStarted, !!currentQuestion]);
 
-  const handleGameOver = useCallback(() => {
+  const handleGameOver = useCallback(async () => {
     setGameState(prev => ({ ...prev, isGameOver: true, isTimerRunning: false }));
-    speak("Yarışma sona erdi! Toplam puanınız: " + gameStateRef.current.totalScore + ". Tebrikler!");
+    const response = await generateHostResponse('welcome'); // Or a generic game over response
+    await speak("Yarışma sona erdi! Toplam puanınız: " + gameStateRef.current.totalScore + ". Tebrikler!");
     confetti({
       particleCount: 150,
       spread: 70,
@@ -155,7 +163,8 @@ export default function GameBoard() {
         ...prev,
         revealedLetters: [...prev.revealedLetters, randomIndex]
       }));
-      await speak("Buyursunlar bir harf.");
+      const response = await generateHostResponse('letter');
+      await speak(response);
     } else {
       await speak("Son harf kaldı, artık cevaplamanız gerekiyor.");
     }
@@ -194,13 +203,26 @@ export default function GameBoard() {
       return str
         .replace(/DAYRE/g, 'DAİRE')
         .replace(/AABİDE/g, 'ABİDE')
-        .replace(/AĞBİDE/g, 'ABİDE');
+        .replace(/AĞBİDE/g, 'ABİDE')
+        .replace(/ABİDE/g, 'ABİDE')
+        .replace(/EYLEM/g, 'EĞLEM') // Example of common variations
+        .replace(/EGITIM/g, 'EĞİTİM')
+        .replace(/AG/g, 'AĞ');
     };
 
-    const normalizedAnswer = phoneticNormalization(answer.toUpperCase())
-      .replace(/İ/g, 'I').replace(/Ğ/g, 'G').replace(/Ü/g, 'U').replace(/Ş/g, 'S').replace(/Ö/g, 'O').replace(/Ç/g, 'C');
-    const normalizedWord = phoneticNormalization(question.word.toUpperCase())
-      .replace(/İ/g, 'I').replace(/Ğ/g, 'G').replace(/Ü/g, 'U').replace(/Ş/g, 'S').replace(/Ö/g, 'O').replace(/Ç/g, 'C');
+    const normalizeForComparison = (str: string) => {
+      return phoneticNormalization(str.toUpperCase())
+        .replace(/İ/g, 'I')
+        .replace(/Ğ/g, 'G')
+        .replace(/Ü/g, 'U')
+        .replace(/Ş/g, 'S')
+        .replace(/Ö/g, 'O')
+        .replace(/Ç/g, 'C')
+        .trim();
+    };
+
+    const normalizedAnswer = normalizeForComparison(answer);
+    const normalizedWord = normalizeForComparison(question.word);
 
     const isCorrect = normalizedAnswer === normalizedWord;
     const wordPoints = (question.word.length - state.revealedLetters.length) * 100;
@@ -219,15 +241,23 @@ export default function GameBoard() {
         }
       }
 
-      await speak("Harika! Doğru cevap.");
-      
-      setGameState(prev => ({
-        ...prev,
-        totalScore: prev.totalScore + wordPoints,
-        isTimerRunning: true,
-        currentQuestionIndex: prev.currentQuestionIndex + 1,
-        revealedLetters: [],
-      }));
+      const response = await generateHostResponse('correct');
+      await speak(response);
+       
+      setGameState(prev => {
+        const newScore = prev.totalScore + wordPoints;
+        if (newScore > highScore) {
+          setHighScore(newScore);
+          localStorage.setItem('kelime_oyunu_high_score', newScore.toString());
+        }
+        return {
+          ...prev,
+          totalScore: newScore,
+          isTimerRunning: true,
+          currentQuestionIndex: prev.currentQuestionIndex + 1,
+          revealedLetters: [],
+        };
+      });
       
       if (state.currentQuestionIndex + 1 >= gameQuestions.length) {
         handleGameOver();
@@ -240,7 +270,8 @@ export default function GameBoard() {
       if (answer === "") {
         await speak(`Süreniz doldu. Doğru cevap ${question.word} olacaktı.`);
       } else {
-        await speak(`Maalesef yanlış. Doğru cevap ${question.word} olacaktı.`);
+        const response = await generateHostResponse('wrong');
+        await speak(`${response} Doğru cevap ${question.word} olacaktı.`);
       }
       
       setGameState(prev => ({
@@ -259,10 +290,14 @@ export default function GameBoard() {
     setTimeout(() => setFeedback(null), 2000);
   }, [handleGameOver, gameQuestions]);
 
+  const lastCommandTimeRef = useRef<number>(0);
+  const COMMAND_COOLDOWN = 1500; // 1.5 seconds
+
   const onCommand = useCallback((command: string) => {
     const state = gameStateRef.current;
     const started = gameStartedRef.current;
     const hostSpeaking = isHostSpeakingRef.current;
+    const now = Date.now();
     
     if (!started || state.isGameOver || hostSpeaking) return;
 
@@ -270,26 +305,30 @@ export default function GameBoard() {
     const harfCommands = ["harf lütfen", "harf alayım", "harf almak istiyorum", "bir harf", "harf ver"];
     const stopCommands = ["durdur", "buton", "cevap", "cevap veriyorum", "kelimeyi söylüyorum", "dur"];
 
+    // Check for cooldown on control commands
+    const isControlCommand = harfCommands.some(cmd => normalizedCommand.includes(cmd)) || 
+                            stopCommands.some(cmd => normalizedCommand.includes(cmd));
+
+    if (isControlCommand && now - lastCommandTimeRef.current < COMMAND_COOLDOWN) {
+      return;
+    }
+
     if (harfCommands.some(cmd => normalizedCommand.includes(cmd))) {
+      lastCommandTimeRef.current = now;
       handleHarfLutfen();
     } else if (stopCommands.some(cmd => normalizedCommand.includes(cmd))) {
+      lastCommandTimeRef.current = now;
       handleStop();
     } else if (state.isAnswering) {
+      // No cooldown for answers, but we might want to wait for the final result
+      // For now, let's just pass it through
       handleAnswer(command);
     }
   }, [handleHarfLutfen, handleStop, handleAnswer]);
 
-  const { isListening, error: speechError } = useSpeechRecognition(onCommand, gameStarted && !gameState.isGameOver);
+  const { isListening, error: speechError } = useSpeechRecognition(onCommand, gameStarted && !gameState.isGameOver && isVoiceEnabled);
 
   const startGame = async () => {
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.error("Microphone permission denied:", err);
-      alert("Oyunu sesli komutlarla oynamak için mikrofon izni vermeniz gerekmektedir.");
-      return;
-    }
-
     const fullPool = [...QUESTIONS_POOL];
     const selected: Question[] = [];
     for (let len = 4; len <= 10; len++) {
@@ -313,7 +352,8 @@ export default function GameBoard() {
       totalScore: 0,
     }));
 
-    await speak("Kelime Oyunu'na hoş geldiniz! İlk sorunuz geliyor.");
+    const response = await generateHostResponse('welcome');
+    await speak(response);
   };
 
   const resetGame = () => {
@@ -333,96 +373,102 @@ export default function GameBoard() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#0a0a20] text-white p-4 md:p-8 font-sans transition-standard transform-gpu">
+    <div className="flex flex-col h-screen bg-[#0a0a20] text-white p-2 md:p-4 font-sans transition-standard transform-gpu overflow-hidden">
       {!gameStarted ? (
-        <div className="flex flex-col items-center justify-center flex-1 p-8">
+        <div className="flex flex-col items-center justify-center flex-1 p-4 overflow-y-auto">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-center space-y-8 max-w-2xl"
+            className="text-center space-y-4 md:space-y-8 max-w-2xl"
           >
-            <h1 className="text-4xl md:text-7xl font-black tracking-tighter text-blue-400 drop-shadow-2xl">KELİME OYUNU</h1>
-            <p className="text-lg md:text-2xl text-gray-400 px-6 max-w-xl mx-auto leading-relaxed">
+            <h1 className="text-3xl md:text-7xl font-black tracking-tighter text-blue-400 drop-shadow-2xl">KELİME OYUNU</h1>
+            <p className="text-sm md:text-2xl text-gray-400 px-4 max-w-xl mx-auto leading-relaxed">
               Efsane yarışma artık sesinizle kontrolünüzde. 
               "Harf alayım" diyerek harf alabilir, "Cevap veriyorum" diyerek süreyi durdurup cevabınızı söyleyebilirsiniz.
             </p>
-            <div className="pt-8">
+            <div className="pt-4">
               <button 
                 onClick={startGame}
-                className="group relative px-10 md:px-16 py-5 md:py-8 bg-blue-600 hover:bg-blue-500 rounded-[2rem] text-xl md:text-3xl font-black transition-all hover:scale-105 active:scale-95 shadow-[0_20px_50px_rgba(37,99,235,0.4)] border-b-8 border-blue-800"
+                className="group relative px-8 md:px-16 py-4 md:py-8 bg-blue-600 hover:bg-blue-500 rounded-[1.5rem] md:rounded-[2rem] text-lg md:text-3xl font-black transition-all hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(37,99,235,0.4)] border-b-4 md:border-b-8 border-blue-800"
               >
-                <span className="flex items-center gap-4">
-                  <Play size={24} className="md:w-10 md:h-10 fill-current" /> YARIŞMAYI BAŞLAT
+                <span className="flex items-center gap-3 md:gap-4">
+                  <Play size={20} className="md:w-10 md:h-10 fill-current" /> YARIŞMAYI BAŞLAT
                 </span>
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-4 md:gap-6 mt-8 justify-center">
+            <div className="flex flex-wrap gap-3 md:gap-6 mt-4 justify-center">
               <button 
                 onClick={() => setShowInstructions(true)}
-                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium text-sm md:text-base"
+                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium text-xs md:text-base"
               >
-                <Info size={18} /> Nasıl Oynanır?
+                <Info size={16} /> Nasıl Oynanır?
               </button>
               <button 
                 onClick={() => setShowCredits(true)}
-                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium text-sm md:text-base"
+                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors font-medium text-xs md:text-base"
               >
-                <Users size={18} /> Yapımcılar
+                <Users size={16} /> Yapımcılar
               </button>
             </div>
 
             {speechError && (
-              <p className="text-red-400 bg-red-900/20 p-4 rounded-lg border border-red-500/50">
+              <p className="text-red-400 bg-red-900/20 p-2 md:p-4 rounded-lg border border-red-500/50 text-xs md:text-sm">
                 {speechError}
               </p>
             )}
           </motion.div>
         </div>
       ) : (
-        <>
-          {/* Header */}
-          <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 md:mb-16">
-            <div className="flex flex-wrap justify-center md:justify-start items-center gap-4 md:gap-8">
-              <div className="bg-blue-900/40 border-2 border-blue-500/30 p-4 md:p-6 rounded-[2rem] backdrop-blur-xl min-w-[140px] shadow-2xl">
-                <div className="flex items-center gap-2 text-blue-400 mb-1">
-                  <Trophy size={18} className="md:w-6 md:h-6" />
-                  <span className="text-[10px] md:text-sm font-black uppercase tracking-widest">Puan</span>
+        <div className="flex flex-col h-full overflow-hidden">
+          {/* Header - Compact */}
+          <div className="flex justify-between items-center gap-2 mb-2 md:mb-6 shrink-0">
+            <div className="flex items-center gap-2 md:gap-4">
+              <div className="bg-blue-900/40 border border-blue-500/30 p-2 md:p-4 rounded-2xl backdrop-blur-xl min-w-[60px] md:min-w-[100px] shadow-lg">
+                <div className="flex items-center gap-1 text-blue-400 mb-0.5">
+                  <Trophy size={10} className="md:w-3 md:h-3" />
+                  <span className="text-[6px] md:text-[8px] font-black uppercase tracking-widest">En Yüksek</span>
                 </div>
-                <div className="text-3xl md:text-5xl font-mono font-black text-white">{gameState.totalScore}</div>
+                <div className="text-sm md:text-xl font-mono font-black text-blue-300 leading-none">{highScore}</div>
+              </div>
+
+              <div className="bg-blue-900/40 border border-blue-500/30 p-2 md:p-4 rounded-2xl backdrop-blur-xl min-w-[80px] md:min-w-[120px] shadow-lg">
+                <div className="flex items-center gap-1 text-blue-400 mb-0.5">
+                  <Trophy size={12} className="md:w-4 md:h-4" />
+                  <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Puan</span>
+                </div>
+                <div className="text-xl md:text-3xl font-mono font-black text-white leading-none">{gameState.totalScore}</div>
               </div>
               
-              <div className={`p-4 md:p-6 rounded-[2rem] border-2 transition-all duration-500 min-w-[140px] shadow-2xl ${gameState.timeLeft < 30 ? 'bg-red-900/40 border-red-500/50 animate-pulse' : 'bg-blue-900/40 border-blue-500/30'}`}>
-                <div className="flex items-center gap-2 text-blue-400 mb-1">
-                  <Timer size={18} className="md:w-6 md:h-6" />
-                  <span className="text-[10px] md:text-sm font-black uppercase tracking-widest">Süre</span>
+              <div className={`p-2 md:p-4 rounded-2xl border transition-all duration-500 min-w-[80px] md:min-w-[120px] shadow-lg ${gameState.timeLeft < 30 ? 'bg-red-900/40 border-red-500/50 animate-pulse' : 'bg-blue-900/40 border-blue-500/30'}`}>
+                <div className="flex items-center gap-1 text-blue-400 mb-0.5">
+                  <Timer size={12} className="md:w-4 md:h-4" />
+                  <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Süre</span>
                 </div>
-                <div className="text-3xl md:text-5xl font-mono font-black text-white">
+                <div className="text-xl md:text-3xl font-mono font-black text-white leading-none">
                   {Math.floor(gameState.timeLeft / 60)}:{(gameState.timeLeft % 60).toString().padStart(2, '0')}
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap justify-center items-center gap-3 md:gap-4">
-              <div className="flex items-center gap-2 md:gap-3 bg-blue-900/20 px-3 md:px-4 py-1.5 md:py-2 rounded-full border border-blue-500/30">
-                <div className={`w-2 h-2 md:w-3 md:h-3 rounded-full ${isHostSpeaking ? 'bg-blue-400 animate-ping' : 'bg-blue-900'}`} />
-                <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest text-blue-400">Sunucu</span>
-              </div>
-
-              <div className={`flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 rounded-full border transition-all duration-300 ${isListening && !isHostSpeaking ? 'bg-green-900/20 border-green-500/50 text-green-400' : 'bg-red-900/20 border-red-500/50 text-red-400'}`}>
-                {isListening && !isHostSpeaking ? <Mic size={16} className="md:w-[18px] md:h-[18px] animate-pulse" /> : <MicOff size={16} className="md:w-[18px] md:h-[18px]" />}
-                <span className="text-[10px] md:text-sm font-bold uppercase tracking-tighter">
-                  {isListening && !isHostSpeaking ? 'Dinliyorum' : isHostSpeaking ? 'Konuşuyor...' : 'Kapalı'}
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
+                className={`flex items-center gap-1.5 px-2 md:px-3 py-1 rounded-full border transition-all duration-300 hover:scale-105 active:scale-95 ${isVoiceEnabled ? (isListening && !isHostSpeaking ? 'bg-green-900/20 border-green-500/50 text-green-400' : 'bg-yellow-900/20 border-yellow-500/50 text-yellow-400') : 'bg-red-900/20 border-red-500/50 text-red-400'}`}
+              >
+                {isVoiceEnabled ? (isListening && !isHostSpeaking ? <Mic size={12} className="md:w-4 md:h-4 animate-pulse" /> : <Mic size={12} className="md:w-4 md:h-4" />) : <MicOff size={12} className="md:w-4 md:h-4" />}
+                <span className="text-[8px] md:text-[10px] font-bold uppercase tracking-tighter">
+                  {!isVoiceEnabled ? 'Ses Kapalı' : isHostSpeaking ? 'Konuşuyor' : isListening ? 'Dinliyorum' : 'Hazır'}
                 </span>
-              </div>
-              <button onClick={resetGame} className="p-2 md:p-3 hover:bg-white/10 rounded-full transition-colors">
-                <RotateCcw size={20} className="md:w-6 md:h-6" />
+              </button>
+              <button onClick={resetGame} className="p-1.5 md:p-2 hover:bg-white/10 rounded-full transition-colors">
+                <RotateCcw size={16} className="md:w-5 md:h-5" />
               </button>
             </div>
           </div>
 
-          {/* Main Game Area */}
-          <div className="flex-1 flex flex-col items-center justify-center max-w-5xl mx-auto w-full">
+          {/* Main Game Area - Flexible */}
+          <div className="flex-1 flex flex-col items-center justify-center max-w-5xl mx-auto w-full overflow-hidden">
             <AnimatePresence mode="wait">
               {!gameState.isGameOver ? (
                 <motion.div 
@@ -430,15 +476,16 @@ export default function GameBoard() {
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 1.05 }}
-                  className="w-full space-y-12"
+                  className="w-full flex flex-col items-center justify-center space-y-4 md:space-y-8 h-full"
                 >
-                  <div className="honeycomb-grid">
+                  <div className="honeycomb-grid flex-wrap max-h-[40%] overflow-y-auto py-2">
                     {currentQuestion && currentQuestion.word.split('').map((char, index) => {
                       const isRevealed = gameState.revealedLetters.includes(index) || gameState.isGameOver;
                       const wordLength = currentQuestion.word.length;
-                      const sizeClass = wordLength > 8 ? 'w-8 h-10 md:w-16 md:h-20' : 
-                                       wordLength > 6 ? 'w-10 h-12 md:w-20 md:h-24' : 
-                                       'w-12 h-14 md:w-24 md:h-28';
+                      // Dynamic sizing based on word length and screen
+                      const sizeClass = wordLength > 9 ? 'w-7 h-8 md:w-14 md:h-16' : 
+                                       wordLength > 7 ? 'w-9 h-10 md:w-18 md:h-22' : 
+                                       'w-11 h-13 md:w-22 md:h-26';
 
                       return (
                         <div key={`${gameState.currentQuestionIndex}-${index}`} className={`hexagon-container ${sizeClass} transform-gpu`}>
@@ -455,8 +502,8 @@ export default function GameBoard() {
                               }}
                               className="absolute inset-0 z-10"
                             >
-                              <div className="hexagon w-full h-full bg-gradient-to-br from-yellow-300 via-yellow-500 to-yellow-700 flex items-center justify-center shadow-[0_5px_15px_rgba(234,179,8,0.3)] md:shadow-[0_10px_30px_rgba(234,179,8,0.5)] border-t border-yellow-200/50">
-                                <span className="text-xl md:text-5xl font-black text-blue-950 drop-shadow-[0_1px_1px_rgba(255,255,255,0.3)] md:drop-shadow-[0_2px_2px_rgba(255,255,255,0.3)]">
+                              <div className="hexagon w-full h-full bg-gradient-to-br from-yellow-300 via-yellow-500 to-yellow-700 flex items-center justify-center shadow-lg border-t border-yellow-200/50">
+                                <span className="text-lg md:text-4xl font-black text-blue-950 drop-shadow-sm">
                                   {char}
                                 </span>
                               </div>
@@ -468,7 +515,7 @@ export default function GameBoard() {
                               transition={{ duration: 0.4, ease: "easeOut" }}
                               className="absolute inset-0"
                             >
-                              <div className="hexagon w-full h-full bg-slate-800/90 border-2 border-slate-700/50 flex items-center justify-center overflow-hidden">
+                              <div className="hexagon w-full h-full bg-slate-800/90 border border-slate-700/50 flex items-center justify-center overflow-hidden">
                                 <div className="hexagon w-[85%] h-[85%] bg-slate-900/80 shadow-inner flex items-center justify-center">
                                    <div className="w-full h-full bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
                                 </div>
@@ -480,25 +527,25 @@ export default function GameBoard() {
                     })}
                   </div>
 
-                  <div className="relative w-full">
-                    <div className={`bg-slate-900/60 border p-5 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-md shadow-2xl transition-standard transform-gpu ${gameState.isAnswering ? 'border-blue-500 ring-4 ring-blue-500/20' : 'border-slate-700/50'}`}>
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-2 md:gap-3 text-blue-400">
-                          <HelpCircle size={20} className="md:w-6 md:h-6" />
-                          <span className="text-[10px] md:text-sm font-bold uppercase tracking-[0.2em]">Soru</span>
+                  <div className="relative w-full max-h-[50%] overflow-y-auto shrink-0">
+                    <div className={`bg-slate-900/60 border p-4 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-md shadow-2xl transition-standard transform-gpu ${gameState.isAnswering ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-700/50'}`}>
+                      <div className="flex justify-between items-start mb-2 md:mb-4">
+                        <div className="flex items-center gap-2 text-blue-400">
+                          <HelpCircle size={16} className="md:w-5 md:h-5" />
+                          <span className="text-[8px] md:text-xs font-bold uppercase tracking-[0.2em]">Soru</span>
                         </div>
                         {gameState.isAnswering && (
                           <motion.div 
                             initial={{ scale: 0.8, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
-                            className="flex items-center gap-2 md:gap-3 bg-blue-600 px-3 md:px-4 py-1.5 md:py-2 rounded-xl shadow-lg"
+                            className="flex items-center gap-2 bg-blue-600 px-2 md:px-3 py-1 rounded-lg shadow-lg"
                           >
-                            <span className="text-[10px] md:text-xs font-black uppercase tracking-widest">Süre</span>
-                            <span className="text-xl md:text-2xl font-mono font-black">{gameState.answerTimeLeft}</span>
+                            <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Cevap Süresi</span>
+                            <span className="text-lg md:text-xl font-mono font-black">{gameState.answerTimeLeft}</span>
                           </motion.div>
                         )}
                       </div>
-                      <p className="text-xl md:text-4xl font-medium leading-tight text-slate-100">
+                      <p className="text-lg md:text-3xl font-medium leading-tight text-slate-100">
                         {currentQuestion?.definition}
                       </p>
                       
@@ -506,9 +553,9 @@ export default function GameBoard() {
                         <motion.div 
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          className="mt-6 flex items-center gap-3 text-blue-400 font-bold italic animate-pulse"
+                          className="mt-3 md:mt-6 flex items-center gap-2 text-blue-400 font-bold italic animate-pulse text-sm md:text-base"
                         >
-                          <Mic size={20} />
+                          <Mic size={16} />
                           <span>Lütfen cevabınızı söyleyin...</span>
                         </motion.div>
                       )}
@@ -519,14 +566,14 @@ export default function GameBoard() {
                 <motion.div 
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="text-center space-y-8"
+                  className="text-center space-y-4 md:space-y-8"
                 >
-                  <h2 className="text-7xl font-black text-blue-400">OYUN BİTTİ</h2>
-                  <div className="text-4xl text-gray-400">Toplam Puanınız</div>
-                  <div className="text-9xl font-mono font-black text-white">{gameState.totalScore}</div>
+                  <h2 className="text-4xl md:text-7xl font-black text-blue-400">OYUN BİTTİ</h2>
+                  <div className="text-xl md:text-4xl text-gray-400">Toplam Puanınız</div>
+                  <div className="text-6xl md:text-9xl font-mono font-black text-white">{gameState.totalScore}</div>
                   <button 
                     onClick={resetGame}
-                    className="px-12 py-6 bg-blue-600 hover:bg-blue-500 rounded-full text-2xl font-bold transition-all"
+                    className="px-8 py-4 md:px-12 md:py-6 bg-blue-600 hover:bg-blue-500 rounded-full text-lg md:text-2xl font-bold transition-all"
                   >
                     TEKRAR OYNA
                   </button>
@@ -535,15 +582,16 @@ export default function GameBoard() {
             </AnimatePresence>
           </div>
 
-          <div className="mt-auto pt-8 flex flex-wrap justify-center gap-4 md:gap-12 text-slate-500 text-[10px] md:text-sm font-bold uppercase tracking-widest">
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-1 bg-slate-800 rounded border border-slate-700 text-slate-300">"Harf Alayım"</span>
+          {/* Footer - Compact */}
+          <div className="mt-auto py-2 md:py-4 flex flex-wrap justify-center gap-3 md:gap-12 text-slate-500 text-[8px] md:text-[10px] font-bold uppercase tracking-widest shrink-0">
+            <div className="flex items-center gap-1.5">
+              <span className="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">"Harf Alayım"</span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-1 bg-slate-800 rounded border border-slate-700 text-slate-300">"Cevap Veriyorum"</span>
+            <div className="flex items-center gap-1.5">
+              <span className="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">"Cevap Veriyorum"</span>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* Feedback Toast */}

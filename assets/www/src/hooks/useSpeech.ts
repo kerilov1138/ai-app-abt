@@ -32,17 +32,31 @@ export function useSpeechRecognition(onCommand: (command: string) => void, enabl
     if (!recognitionRef.current) {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false;
+      recognition.interimResults = true; // Faster feedback
       recognition.lang = 'tr-TR';
 
       recognition.onresult = (event: any) => {
-        const last = event.results.length - 1;
-        const command = event.results[last][0].transcript.toLowerCase().trim();
-        onCommandRef.current(command);
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        const command = (finalTranscript || interimTranscript).toLowerCase().trim();
+        if (command) {
+          onCommandRef.current(command);
+        }
       };
 
       recognition.onerror = (event: any) => {
-        if (event.error === 'no-speech' || event.error === 'audio-capture' || event.error === 'not-allowed') {
+        if (event.error === 'no-speech') return; // Ignore silent periods
+        
+        if (event.error === 'audio-capture' || event.error === 'not-allowed') {
           setIsListening(false);
           return;
         }
@@ -50,7 +64,17 @@ export function useSpeechRecognition(onCommand: (command: string) => void, enabl
       };
 
       recognition.onstart = () => setIsListening(true);
-      recognition.onend = () => setIsListening(false);
+      recognition.onend = () => {
+        setIsListening(false);
+        // Auto-restart if still enabled
+        if (enabled && recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            // Already started or other error
+          }
+        }
+      };
       
       recognitionRef.current = recognition;
     }

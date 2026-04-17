@@ -49,6 +49,7 @@ flutter:
     - assets/www/android/gradle/wrapper/ # STATIC
     - assets/www/lib/ # STATIC
     - assets/www/public/ # STATIC
+    - assets/www/scripts/ # STATIC
     - assets/www/src/ # STATIC
     - assets/www/src/components/ # STATIC
     - assets/www/src/hooks/ # STATIC

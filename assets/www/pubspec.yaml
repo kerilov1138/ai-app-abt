@@ -27,3 +27,4 @@ flutter:
   assets:
     - assets/www/
     - assets/www/assets/
+    # END ASSETS

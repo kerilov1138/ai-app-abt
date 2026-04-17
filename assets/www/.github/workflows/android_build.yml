@@ -37,7 +37,8 @@ jobs:
 
     - name: Prepare Assets for Flutter
       run: |
-        # Create assets/www directory if it doesn't exist
+        # Create fresh assets/www directory
+        rm -rf assets/www
         mkdir -p assets/www
         # Copy built web files to Flutter assets
         cp -r dist/* assets/www/
@@ -47,6 +48,9 @@ jobs:
           echo "Error: index.html not found in dist/"
           exit 1
         fi
+
+    - name: Dynamically Update pubspec.yaml Assets
+      run: python3 scripts/update_assets.py
 
     - name: Ensure Flutter Project Structure
       run: |
