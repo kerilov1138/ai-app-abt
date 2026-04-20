@@ -49,6 +49,8 @@ export function useSpeechRecognition(onCommand: (command: string) => void, enabl
 
         const command = (finalTranscript || interimTranscript).toLowerCase().trim();
         if (command) {
+          // Log what is heard for debugging in Flutter
+          console.log(`Speech Heard: "${command}" (Final: ${!!finalTranscript})`);
           onCommandRef.current(command);
         }
       };

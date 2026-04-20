@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
-import { Timer, Trophy, HelpCircle, Play, RotateCcw, X, Info, Users, Mic, MicOff } from 'lucide-react';
+import { Timer, Trophy, HelpCircle, Play, RotateCcw, X, Info, Users } from 'lucide-react';
 import { Question, GameState } from '../types';
 import { QUESTIONS_POOL } from '../constants';
-import { useSpeechRecognition } from '../hooks/useSpeech';
 import { generateHostResponse, speakText, playRevealSound } from '../services/aiService';
 
 /**
@@ -28,6 +27,9 @@ export default function GameBoard() {
   const [gameQuestions, setGameQuestions] = useState<Question[]>([]);
   const [showInstructions, setShowInstructions] = useState(false);
   const [showCredits, setShowCredits] = useState(false);
+  const [manualAnswer, setManualAnswer] = useState('');
+  const [isQuestionIntroActive, setIsQuestionIntroActive] = useState(false);
+  const manualInputRef = useRef<HTMLInputElement>(null);
   
   const [gameState, setGameState] = useState<GameState>({
     currentQuestionIndex: 0,
@@ -42,7 +44,6 @@ export default function GameBoard() {
     totalScore: 0,
   });
 
-  const [isVoiceEnabled, setIsVoiceEnabled] = useState(false);
   const [highScore, setHighScore] = useState<number>(() => {
     const saved = localStorage.getItem('kelime_oyunu_high_score');
     return saved ? parseInt(saved, 10) : 0;
@@ -82,7 +83,8 @@ export default function GameBoard() {
     await speakText(text);
     setIsHostSpeaking(false);
     
-    if (pauseTimer && wasTimerRunning && !gameStateRef.current.isGameOver && !gameStateRef.current.isAnswering) {
+    // Check if we should resume timer - but ONLY if we aren't in a special intro phase
+    if (pauseTimer && wasTimerRunning && !gameStateRef.current.isGameOver && !gameStateRef.current.isAnswering && !isQuestionIntroActive) {
       setGameState(prev => ({ ...prev, isTimerRunning: true }));
     }
   };
@@ -90,9 +92,16 @@ export default function GameBoard() {
   useEffect(() => {
     const triggerQuestion = async () => {
       if (gameStarted && !gameState.isGameOver && !gameState.isAnswering && currentQuestion) {
-        setGameState(prev => ({ ...prev, isTimerRunning: true }));
-        // Speak the definition directly
+        // 1. Ensure timer is paused during intro
+        setGameState(prev => ({ ...prev, isTimerRunning: false }));
+        setIsQuestionIntroActive(true);
+        
+        // 2. Host speaks the definition
         await speak(currentQuestion.definition, false);
+        
+        // 3. Intro finished: show UI and start timer
+        setIsQuestionIntroActive(false);
+        setGameState(prev => ({ ...prev, isTimerRunning: true }));
       }
     };
     triggerQuestion();
@@ -199,25 +208,19 @@ export default function GameBoard() {
     const question = gameQuestions[state.currentQuestionIndex];
     if (!question) return;
     
-    const phoneticNormalization = (str: string) => {
-      return str
-        .replace(/DAYRE/g, 'DAİRE')
-        .replace(/AABİDE/g, 'ABİDE')
-        .replace(/AĞBİDE/g, 'ABİDE')
-        .replace(/ABİDE/g, 'ABİDE')
-        .replace(/EYLEM/g, 'EĞLEM') // Example of common variations
-        .replace(/EGITIM/g, 'EĞİTİM')
-        .replace(/AG/g, 'AĞ');
-    };
-
     const normalizeForComparison = (str: string) => {
-      return phoneticNormalization(str.toUpperCase())
+      // Turkish phonetic mapping: Spoken Turkish vs Written Turkish
+      // We convert everything to base letters to handle STT variations.
+      return str.toUpperCase()
+        .replace(/I/g, 'I')
         .replace(/İ/g, 'I')
         .replace(/Ğ/g, 'G')
         .replace(/Ü/g, 'U')
         .replace(/Ş/g, 'S')
         .replace(/Ö/g, 'O')
         .replace(/Ç/g, 'C')
+        .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "") // Remove punctuation
+        .replace(/\s+/g, "") // Remove all spaces for exact word matching
         .trim();
     };
 
@@ -290,44 +293,6 @@ export default function GameBoard() {
     setTimeout(() => setFeedback(null), 2000);
   }, [handleGameOver, gameQuestions]);
 
-  const lastCommandTimeRef = useRef<number>(0);
-  const COMMAND_COOLDOWN = 1500; // 1.5 seconds
-
-  const onCommand = useCallback((command: string) => {
-    const state = gameStateRef.current;
-    const started = gameStartedRef.current;
-    const hostSpeaking = isHostSpeakingRef.current;
-    const now = Date.now();
-    
-    if (!started || state.isGameOver || hostSpeaking) return;
-
-    const normalizedCommand = command.toLowerCase();
-    const harfCommands = ["harf lütfen", "harf alayım", "harf almak istiyorum", "bir harf", "harf ver"];
-    const stopCommands = ["durdur", "buton", "cevap", "cevap veriyorum", "kelimeyi söylüyorum", "dur"];
-
-    // Check for cooldown on control commands
-    const isControlCommand = harfCommands.some(cmd => normalizedCommand.includes(cmd)) || 
-                            stopCommands.some(cmd => normalizedCommand.includes(cmd));
-
-    if (isControlCommand && now - lastCommandTimeRef.current < COMMAND_COOLDOWN) {
-      return;
-    }
-
-    if (harfCommands.some(cmd => normalizedCommand.includes(cmd))) {
-      lastCommandTimeRef.current = now;
-      handleHarfLutfen();
-    } else if (stopCommands.some(cmd => normalizedCommand.includes(cmd))) {
-      lastCommandTimeRef.current = now;
-      handleStop();
-    } else if (state.isAnswering) {
-      // No cooldown for answers, but we might want to wait for the final result
-      // For now, let's just pass it through
-      handleAnswer(command);
-    }
-  }, [handleHarfLutfen, handleStop, handleAnswer]);
-
-  const { isListening, error: speechError } = useSpeechRecognition(onCommand, gameStarted && !gameState.isGameOver && isVoiceEnabled);
-
   const startGame = async () => {
     const fullPool = [...QUESTIONS_POOL];
     const selected: Question[] = [];
@@ -338,6 +303,7 @@ export default function GameBoard() {
     }
     setGameQuestions(selected);
     setGameStarted(true);
+    setManualAnswer('');
     
     setGameState(prev => ({
       ...prev,
@@ -370,6 +336,21 @@ export default function GameBoard() {
       totalScore: 0,
     });
     setGameStarted(false);
+    setManualAnswer('');
+  };
+
+  useEffect(() => {
+    if (gameState.isAnswering && manualInputRef.current) {
+      manualInputRef.current.focus();
+    }
+  }, [gameState.isAnswering]);
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (manualAnswer.trim()) {
+      handleAnswer(manualAnswer);
+      setManualAnswer('');
+    }
   };
 
   return (
@@ -383,15 +364,15 @@ export default function GameBoard() {
           >
             <h1 className="text-3xl md:text-7xl font-black tracking-tighter text-blue-400 drop-shadow-2xl">KELİME OYUNU</h1>
             <p className="text-sm md:text-2xl text-gray-400 px-4 max-w-xl mx-auto leading-relaxed">
-              Efsane yarışma artık sesinizle kontrolünüzde. 
-              "Harf alayım" diyerek harf alabilir, "Cevap veriyorum" diyerek süreyi durdurup cevabınızı söyleyebilirsiniz.
+              Efsane yarışma Kelime Oyunu'na hoş geldiniz! 
+              Verilen tanımlara göre en kısa sürede kelimeleri bulmaya çalışın.
             </p>
-            <div className="pt-4">
+            <div className="pt-4 flex justify-center">
               <button 
-                onClick={startGame}
+                onClick={() => startGame()}
                 className="group relative px-8 md:px-16 py-4 md:py-8 bg-blue-600 hover:bg-blue-500 rounded-[1.5rem] md:rounded-[2rem] text-lg md:text-3xl font-black transition-all hover:scale-105 active:scale-95 shadow-[0_10px_30px_rgba(37,99,235,0.4)] border-b-4 md:border-b-8 border-blue-800"
               >
-                <span className="flex items-center gap-3 md:gap-4">
+                <span className="flex items-center gap-3 md:gap-4 justify-center">
                   <Play size={20} className="md:w-10 md:h-10 fill-current" /> YARIŞMAYI BAŞLAT
                 </span>
               </button>
@@ -411,12 +392,6 @@ export default function GameBoard() {
                 <Users size={16} /> Yapımcılar
               </button>
             </div>
-
-            {speechError && (
-              <p className="text-red-400 bg-red-900/20 p-2 md:p-4 rounded-lg border border-red-500/50 text-xs md:text-sm">
-                {speechError}
-              </p>
-            )}
           </motion.div>
         </div>
       ) : (
@@ -452,15 +427,6 @@ export default function GameBoard() {
             </div>
 
             <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
-                className={`flex items-center gap-1.5 px-2 md:px-3 py-1 rounded-full border transition-all duration-300 hover:scale-105 active:scale-95 ${isVoiceEnabled ? (isListening && !isHostSpeaking ? 'bg-green-900/20 border-green-500/50 text-green-400' : 'bg-yellow-900/20 border-yellow-500/50 text-yellow-400') : 'bg-red-900/20 border-red-500/50 text-red-400'}`}
-              >
-                {isVoiceEnabled ? (isListening && !isHostSpeaking ? <Mic size={12} className="md:w-4 md:h-4 animate-pulse" /> : <Mic size={12} className="md:w-4 md:h-4" />) : <MicOff size={12} className="md:w-4 md:h-4" />}
-                <span className="text-[8px] md:text-[10px] font-bold uppercase tracking-tighter">
-                  {!isVoiceEnabled ? 'Ses Kapalı' : isHostSpeaking ? 'Konuşuyor' : isListening ? 'Dinliyorum' : 'Hazır'}
-                </span>
-              </button>
               <button onClick={resetGame} className="p-1.5 md:p-2 hover:bg-white/10 rounded-full transition-colors">
                 <RotateCcw size={16} className="md:w-5 md:h-5" />
               </button>
@@ -478,89 +444,144 @@ export default function GameBoard() {
                   exit={{ opacity: 0, scale: 1.05 }}
                   className="w-full flex flex-col items-center justify-center space-y-4 md:space-y-8 h-full"
                 >
-                  <div className="honeycomb-grid flex-wrap max-h-[40%] overflow-y-auto py-2">
-                    {currentQuestion && currentQuestion.word.split('').map((char, index) => {
-                      const isRevealed = gameState.revealedLetters.includes(index) || gameState.isGameOver;
-                      const wordLength = currentQuestion.word.length;
-                      // Dynamic sizing based on word length and screen
-                      const sizeClass = wordLength > 9 ? 'w-7 h-8 md:w-14 md:h-16' : 
-                                       wordLength > 7 ? 'w-9 h-10 md:w-18 md:h-22' : 
-                                       'w-11 h-13 md:w-22 md:h-26';
+                  <AnimatePresence>
+                    {!isQuestionIntroActive && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.5, rotateX: -90 }}
+                        animate={{ opacity: 1, scale: 1, rotateX: 0 }}
+                        transition={{ duration: 0.6, type: "spring", bounce: 0.4 }}
+                        className="honeycomb-grid flex-wrap max-h-[40%] overflow-y-auto py-2"
+                      >
+                        {currentQuestion && currentQuestion.word.split('').map((char, index) => {
+                          const isRevealed = gameState.revealedLetters.includes(index) || gameState.isGameOver;
+                          const wordLength = currentQuestion.word.length;
+                          const sizeClass = wordLength > 9 ? 'w-7 h-8 md:w-14 md:h-16' : 
+                                           wordLength > 7 ? 'w-9 h-10 md:w-18 md:h-22' : 
+                                           'w-11 h-13 md:w-22 md:h-26';
 
-                      return (
-                        <div key={`${gameState.currentQuestionIndex}-${index}`} className={`hexagon-container ${sizeClass} transform-gpu`}>
-                          <div className="hexagon-inner w-full h-full">
-                            <motion.div
-                              initial={false}
-                              animate={{ 
-                                rotateY: isRevealed ? 0 : 90,
-                                scale: isRevealed ? [1, 1.1, 1] : 1
-                              }}
-                              transition={{ 
-                                rotateY: { duration: 0.4, ease: "easeOut" },
-                                scale: { duration: 0.3, times: [0, 0.5, 1] }
-                              }}
-                              className="absolute inset-0 z-10"
-                            >
-                              <div className="hexagon w-full h-full bg-gradient-to-br from-yellow-300 via-yellow-500 to-yellow-700 flex items-center justify-center shadow-lg border-t border-yellow-200/50">
-                                <span className="text-lg md:text-4xl font-black text-blue-950 drop-shadow-sm">
-                                  {char}
-                                </span>
-                              </div>
-                            </motion.div>
+                          return (
+                            <div key={`${gameState.currentQuestionIndex}-${index}`} className={`hexagon-container ${sizeClass} transform-gpu`}>
+                              <div className="hexagon-inner w-full h-full">
+                                <motion.div
+                                  initial={false}
+                                  animate={{ 
+                                    rotateY: isRevealed ? 0 : 90,
+                                    scale: isRevealed ? [1, 1.1, 1] : 1
+                                  }}
+                                  transition={{ 
+                                    rotateY: { duration: 0.4, ease: "easeOut" },
+                                    scale: { duration: 0.3, times: [0, 0.5, 1] }
+                                  }}
+                                  className="absolute inset-0 z-10"
+                                >
+                                  <div className="hexagon w-full h-full bg-gradient-to-br from-yellow-300 via-yellow-500 to-yellow-700 flex items-center justify-center shadow-lg border-t border-yellow-200/50">
+                                    <span className="text-lg md:text-4xl font-black text-blue-950 drop-shadow-sm">
+                                      {char}
+                                    </span>
+                                  </div>
+                                </motion.div>
 
-                            <motion.div
-                              initial={false}
-                              animate={{ rotateY: isRevealed ? -90 : 0 }}
-                              transition={{ duration: 0.4, ease: "easeOut" }}
-                              className="absolute inset-0"
-                            >
-                              <div className="hexagon w-full h-full bg-slate-800/90 border border-slate-700/50 flex items-center justify-center overflow-hidden">
-                                <div className="hexagon w-[85%] h-[85%] bg-slate-900/80 shadow-inner flex items-center justify-center">
-                                   <div className="w-full h-full bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
-                                </div>
+                                <motion.div
+                                  initial={false}
+                                  animate={{ rotateY: isRevealed ? -90 : 0 }}
+                                  transition={{ duration: 0.4, ease: "easeOut" }}
+                                  className="absolute inset-0"
+                                >
+                                  <div className="hexagon w-full h-full bg-slate-800/90 border border-slate-700/50 flex items-center justify-center overflow-hidden">
+                                    <div className="hexagon w-[85%] h-[85%] bg-slate-900/80 shadow-inner flex items-center justify-center">
+                                       <div className="w-full h-full bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
+                                    </div>
+                                  </div>
+                                </motion.div>
                               </div>
-                            </motion.div>
+                            </div>
+                          );
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <AnimatePresence>
+                    {!isQuestionIntroActive && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 30, rotateX: 45 }}
+                        animate={{ opacity: 1, y: 0, rotateX: 0 }}
+                        transition={{ delay: 0.3, duration: 0.5 }}
+                        className="relative w-full max-h-[50%] overflow-y-auto shrink-0"
+                      >
+                        <div className={`bg-slate-900/60 border p-4 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-md shadow-2xl transition-standard transform-gpu ${gameState.isAnswering ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-700/50'}`}>
+                          <div className="flex justify-between items-start mb-2 md:mb-4">
+                            <div className="flex items-center gap-2 text-blue-400">
+                              <HelpCircle size={16} className="md:w-5 md:h-5" />
+                              <span className="text-[8px] md:text-xs font-bold uppercase tracking-[0.2em]">Soru</span>
+                            </div>
+                            {gameState.isAnswering && (
+                              <motion.div 
+                                initial={{ scale: 0.8, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                className="flex items-center gap-2 bg-blue-600 px-2 md:px-3 py-1 rounded-lg shadow-lg"
+                              >
+                                <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Cevap Süresi</span>
+                                <span className="text-lg md:text-xl font-mono font-black">{gameState.answerTimeLeft}</span>
+                              </motion.div>
+                            )}
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          <p className="text-lg md:text-3xl font-medium leading-tight text-slate-100">
+                            {currentQuestion?.definition}
+                          </p>
+                          
+                          {gameState.isAnswering && (
+                            <div className="mt-4 space-y-4">
+                              <motion.div 
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="flex items-center gap-2 text-blue-400 font-bold italic animate-pulse text-sm md:text-base mb-2"
+                              >
+                                <Play size={16} />
+                                <span>Lütfen cevabınızı yazın...</span>
+                              </motion.div>
 
-                  <div className="relative w-full max-h-[50%] overflow-y-auto shrink-0">
-                    <div className={`bg-slate-900/60 border p-4 md:p-8 rounded-2xl md:rounded-3xl backdrop-blur-md shadow-2xl transition-standard transform-gpu ${gameState.isAnswering ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-700/50'}`}>
-                      <div className="flex justify-between items-start mb-2 md:mb-4">
-                        <div className="flex items-center gap-2 text-blue-400">
-                          <HelpCircle size={16} className="md:w-5 md:h-5" />
-                          <span className="text-[8px] md:text-xs font-bold uppercase tracking-[0.2em]">Soru</span>
+                              <form onSubmit={handleManualSubmit} className="flex gap-2">
+                                <input 
+                                  ref={manualInputRef}
+                                  type="text"
+                                  value={manualAnswer}
+                                  onChange={(e) => setManualAnswer(e.target.value)}
+                                  placeholder="Cevabınız..."
+                                  className="flex-1 bg-slate-800 border-2 border-blue-500/50 rounded-xl px-4 py-2 text-white outline-none focus:border-blue-400 transition-colors uppercase font-black"
+                                  autoFocus
+                                />
+                                <button 
+                                  type="submit"
+                                  className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-xl font-bold transition-all text-sm md:text-base"
+                                >
+                                  CEVAP VER
+                                </button>
+                              </form>
+                            </div>
+                          )}
                         </div>
-                        {gameState.isAnswering && (
-                          <motion.div 
-                            initial={{ scale: 0.8, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            className="flex items-center gap-2 bg-blue-600 px-2 md:px-3 py-1 rounded-lg shadow-lg"
-                          >
-                            <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Cevap Süresi</span>
-                            <span className="text-lg md:text-xl font-mono font-black">{gameState.answerTimeLeft}</span>
-                          </motion.div>
-                        )}
-                      </div>
-                      <p className="text-lg md:text-3xl font-medium leading-tight text-slate-100">
-                        {currentQuestion?.definition}
-                      </p>
-                      
-                      {gameState.isAnswering && (
-                        <motion.div 
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          className="mt-3 md:mt-6 flex items-center gap-2 text-blue-400 font-bold italic animate-pulse text-sm md:text-base"
-                        >
-                          <Mic size={16} />
-                          <span>Lütfen cevabınızı söyleyin...</span>
-                        </motion.div>
-                      )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Manual Controls */}
+                  {!gameState.isGameOver && !gameState.isAnswering && !isQuestionIntroActive && (
+                    <div className="flex gap-4 mt-4">
+                      <button 
+                        onClick={handleHarfLutfen}
+                        className="px-6 py-3 bg-yellow-600 hover:bg-yellow-500 rounded-xl font-black text-sm md:text-base border-b-4 border-yellow-800 transition-all active:translate-y-1 active:border-b-0"
+                      >
+                        HARF LÜTFEN
+                      </button>
+                      <button 
+                        onClick={handleStop}
+                        className="px-6 py-3 bg-red-600 hover:bg-red-500 rounded-xl font-black text-sm md:text-base border-b-4 border-red-800 transition-all active:translate-y-1 active:border-b-0"
+                      >
+                        CEVAP VERİYORUM
+                      </button>
                     </div>
-                  </div>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div 
@@ -582,15 +603,8 @@ export default function GameBoard() {
             </AnimatePresence>
           </div>
 
-          {/* Footer - Compact */}
-          <div className="mt-auto py-2 md:py-4 flex flex-wrap justify-center gap-3 md:gap-12 text-slate-500 text-[8px] md:text-[10px] font-bold uppercase tracking-widest shrink-0">
-            <div className="flex items-center gap-1.5">
-              <span className="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">"Harf Alayım"</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">"Cevap Veriyorum"</span>
-            </div>
-          </div>
+          {/* Footer - Spacer */}
+          <div className="mt-auto py-2 md:py-4 shrink-0" />
         </div>
       )}
 
@@ -639,11 +653,11 @@ export default function GameBoard() {
                   <p>4 harften 10 harfe kadar değişen kelimeleri, verilen tanımlara bakarak en kısa sürede bulmaya çalışın.</p>
                 </section>
                 <section>
-                  <h3 className="text-xl font-semibold text-white mb-2">Sesli Komutlar</h3>
+                  <h3 className="text-xl font-semibold text-white mb-2">Nasıl Oynanır?</h3>
                   <ul className="list-disc list-inside space-y-2">
-                    <li><span className="text-blue-400 font-mono">"Harf lütfen"</span> veya <span className="text-blue-400 font-mono">"Harf alayım"</span>: Bir harf açar (100 puan eksiltir).</li>
-                    <li><span className="text-blue-400 font-mono">"Durdur"</span> veya <span className="text-blue-400 font-mono">"Cevap veriyorum"</span>: Süreyi durdurur ve sunucu "Bekliyoruz" dedikten sonra 5 saniyelik cevap süreniz başlar.</li>
-                    <li>Cevap modundayken sadece kelimeyi söylemeniz yeterlidir.</li>
+                    <li><span className="text-blue-400 font-bold uppercase">Harf Lütfen:</span> Bir harf açar ve kelime puanınızdan 100 puan eksiltir.</li>
+                    <li><span className="text-blue-400 font-bold uppercase">Cevap Veriyorum:</span> Süreyi durdurur ve 5 saniye içinde cevabınızı yazmanız istenir.</li>
+                    <li>Cevap verirken tüm harfleri doğru ve eksiksiz yazmalısınız.</li>
                   </ul>
                 </section>
                 <section>

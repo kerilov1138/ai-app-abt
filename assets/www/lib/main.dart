@@ -2,8 +2,49 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Yerel bir HTTP sunucusu başlatıyoruz.
+  // Bu, Web Speech API'nin (Ses Tanıma) çalışması için gereken "Secure Context"i sağlar.
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
+  
+  server.listen((HttpRequest request) async {
+    try {
+      String path = request.uri.path;
+      if (path == '/') path = '/index.html';
+      
+      // Assets klasöründen dosyayı oku
+      final assetPath = 'assets/www${path}';
+      final byteData = await rootBundle.load(assetPath);
+      final bytes = byteData.buffer.asUint8List();
+      
+      // İçerik tipini belirle
+      String contentType = 'text/html';
+      if (path.endsWith('.js')) contentType = 'application/javascript';
+      if (path.endsWith('.css')) contentType = 'text/css';
+      if (path.endsWith('.json')) contentType = 'application/json';
+      if (path.endsWith('.png')) contentType = 'image/png';
+      if (path.endsWith('.jpg') || path.endsWith('.jpeg')) contentType = 'image/jpeg';
+      if (path.endsWith('.wav')) contentType = 'audio/wav';
+      if (path.endsWith('.mp3')) contentType = 'audio/mpeg';
+      if (path.endsWith('.svg')) contentType = 'image/svg+xml';
+      
+      request.response
+        ..headers.contentType = ContentType.parse(contentType)
+        ..add(bytes)
+        ..close();
+    } catch (e) {
+      request.response
+        ..statusCode = HttpStatus.notFound
+        ..close();
+    }
+  });
+
   runApp(const MyApp());
 }
 
@@ -14,6 +55,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Kelime Oyunu AI',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterialDesign: true,
@@ -38,7 +80,18 @@ class _WebViewPageState extends State<WebViewPage> {
   @override
   void initState() {
     super.initState();
+    _requestPermissions();
+    _initController();
+  }
 
+  Future<void> _requestPermissions() async {
+    await [
+      Permission.microphone,
+      Permission.speech,
+    ].request();
+  }
+
+  void _initController() {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF0A0A20))
@@ -62,22 +115,27 @@ class _WebViewPageState extends State<WebViewPage> {
             });
           },
           onWebResourceError: (WebResourceError error) {
+            if (error.description.contains("net::ERR_CACHE_MISS")) return;
             setState(() {
               _errorMessage = "Yükleme hatası: ${error.description}";
               _isLoading = false;
             });
           },
         ),
-      )
-      ..loadFlutterAsset('assets/www/index.html');
+      );
 
-    // Platform specific settings
-    final platform = _controller.platform;
-    if (platform is AndroidWebViewController) {
-      platform.setMediaPlaybackRequiresUserGesture(false);
-      // Ensure file and DOM storage access
-      platform.setGeolocatableOptions(const AndroidGeolocatableOptions(enabled: true));
+    if (_controller.platform is AndroidWebViewController) {
+      final androidController = _controller.platform as AndroidWebViewController;
+      
+      androidController.setOnPermissionRequest((request) async {
+        return request.grant();
+      });
+
+      androidController.setMediaPlaybackRequiresUserGesture(false);
     }
+    
+    // Yerel sunucu üzerinden uygulamayı yükle (Ses tanıma için zorunlu)
+    _controller.loadRequest(Uri.parse('http://localhost:8080/index.html'));
   }
 
   @override
