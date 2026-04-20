@@ -30,10 +30,20 @@ jobs:
       with:
         channel: 'stable'
 
+    - name: Debug Directory Structure
+      run: |
+        echo "Current working directory: $(pwd)"
+        ls -R
+        
     - name: Build Web Assets (Vite)
       run: |
+        # Fix for "Cannot find native binding" and npm bugs
+        rm -rf node_modules package-lock.json
         npm install
-        npm run build
+        # Ensure esbuild is present for Linux
+        npm install -D esbuild-linux-64
+        # Run build explicitly from root using the root config
+        npx vite build --config ./vite.config.ts
 
     - name: Prepare Assets for Flutter
       run: |
