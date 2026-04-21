@@ -56,6 +56,13 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Ensure Android scaffold exists
+        run: |
+          if [ ! -f android/app/build.gradle ] && [ ! -f android/app/build.gradle.kts ]; then
+            echo "Android scaffold eksik, flutter create ile olusturuluyor..."
+            flutter create . --platforms=android --org com.kelime_oyunu
+          fi
+
       - name: Flutter pub get
         run: flutter pub get
       - name: Create Native Splash
