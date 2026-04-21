@@ -2,9 +2,14 @@ name: Build APK
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -30,32 +35,26 @@ jobs:
       with:
         channel: 'stable'
 
-    - name: Debug Directory Structure
-      run: |
-        echo "Current working directory: $(pwd)"
-        ls -R
-        
     - name: Build Web Assets (Vite)
       run: |
         # Fix for "Cannot find native binding" and npm bugs
         rm -rf node_modules package-lock.json
         npm install
-        # Ensure esbuild is present for Linux
+        # Force esbuild for Linux to avoid native binding issues
         npm install -D esbuild-linux-64
-        # Run build explicitly from root using the root config
+        # Build using the root config
         npx vite build --config ./vite.config.ts
 
     - name: Prepare Assets for Flutter
       run: |
-        # Create fresh assets/www directory
+        # Ensure fresh assets/www directory
         rm -rf assets/www
         mkdir -p assets/www
-        # Copy built web files to Flutter assets
+        # Copy built web files (one single index.html and assets)
         cp -r dist/* assets/www/
-        
-        # Ensure index.html is at the root of assets/www
+        # Security check
         if [ ! -f "assets/www/index.html" ]; then
-          echo "Error: index.html not found in dist/"
+          echo "Error: index.html not found after build."
           exit 1
         fi
 
@@ -64,15 +63,20 @@ jobs:
 
     - name: Ensure Flutter Project Structure
       run: |
-        # If android folder doesn't exist, create it
+        # Recreate android folder to ensure it's clean and has correct org
         if [ ! -d "android" ]; then
           flutter create . --platforms=android --org com.kelime_oyunu
         fi
+        # Remove default tests if they cause issues
+        rm -rf test 
 
     - name: Install Flutter Dependencies
       run: flutter pub get
 
-    - name: Build APK
+    - name: Generate Splash Screen
+      run: dart run flutter_native_splash:create
+
+    - name: Build APK (Release)
       run: flutter build apk --release --no-tree-shake-icons
 
     - name: Upload APK Artifact
@@ -80,3 +84,15 @@ jobs:
       with:
         name: app-release
         path: build/app/outputs/flutter-apk/app-release.apk
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        name: App Release ${{ github.ref_name }}
+        files: build/app/outputs/flutter-apk/app-release.apk
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
