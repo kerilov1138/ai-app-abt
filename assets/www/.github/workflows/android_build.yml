@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Use the latest stable Ubuntu as recommended in logs
 
     steps:
     - name: Checkout Repository
@@ -37,24 +37,38 @@ jobs:
 
     - name: Build Web Assets (Vite)
       run: |
-        # Fix for "Cannot find native binding" and npm bugs
-        rm -rf node_modules package-lock.json
+        echo "Building Web Assets..."
+        # 1. Clean previous build artifacts
+        rm -rf node_modules package-lock.json dist assets/www
+        
+        # 2. Install dependencies (Clean Install)
         npm install
-        # Force esbuild for Linux to avoid native binding issues
+        
+        # 3. Fix for "Cannot find native binding" by ensuring esbuild for Linux
         npm install -D esbuild-linux-64
-        # Build using the root config
-        npx vite build --config ./vite.config.ts
+        
+        # 4. Production Build (Fail-fast: if this fails, the job stops)
+        npm run build
+        
+        # 5. Verification: Check if build output exists
+        if [ ! -f "dist/index.html" ]; then
+          echo "Error: Web build failed to produce dist/index.html"
+          exit 1
+        fi
 
     - name: Prepare Assets for Flutter
       run: |
-        # Ensure fresh assets/www directory
-        rm -rf assets/www
+        echo "Preparing assets/www..."
+        # Create a fresh directory for Flutter assets
         mkdir -p assets/www
-        # Copy built web files (one single index.html and assets)
+        
+        # Copy ONLY the build output (dist/) to assets/www/
+        # This prevents source code from being included in the APK
         cp -r dist/* assets/www/
-        # Security check
+        
+        # Final verification before Flutter build
         if [ ! -f "assets/www/index.html" ]; then
-          echo "Error: index.html not found after build."
+          echo "Error: assets/www/index.html is missing after copy."
           exit 1
         fi
 
@@ -63,12 +77,12 @@ jobs:
 
     - name: Ensure Flutter Project Structure
       run: |
-        # Recreate android folder to ensure it's clean and has correct org
+        # If android folder is missing, create it properly
         if [ ! -d "android" ]; then
           flutter create . --platforms=android --org com.kelime_oyunu
         fi
-        # Remove default tests if they cause issues
-        rm -rf test 
+        # Remove default test/ folder to avoid unnecessary build checks
+        rm -rf test
 
     - name: Install Flutter Dependencies
       run: flutter pub get
@@ -77,7 +91,9 @@ jobs:
       run: dart run flutter_native_splash:create
 
     - name: Build APK (Release)
-      run: flutter build apk --release --no-tree-shake-icons
+      run: |
+        # Build without tree-shaking icons to avoid known font issues in some environments
+        flutter build apk --release --no-tree-shake-icons
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
