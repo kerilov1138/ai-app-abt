@@ -33,25 +33,4 @@ flutter:
   assets:
     - assets/splash_logo.png # SPLASH
     - assets/www/ # STATIC
-    - assets/www/.github/ # STATIC
-    - assets/www/.github/workflows/ # STATIC
-    - assets/www/android/ # STATIC
-    - assets/www/android/app/ # STATIC
-    - assets/www/android/app/src/ # STATIC
-    - assets/www/android/app/src/main/ # STATIC
-    - assets/www/android/app/src/main/kotlin/ # STATIC
-    - assets/www/android/app/src/main/kotlin/com/ # STATIC
-    - assets/www/android/app/src/main/kotlin/com/kelimeoyunu/ # STATIC
-    - assets/www/android/app/src/main/kotlin/com/kelimeoyunu/ai/ # STATIC
-    - assets/www/android/app/src/main/res/ # STATIC
-    - assets/www/android/app/src/main/res/values/ # STATIC
-    - assets/www/android/gradle/ # STATIC
-    - assets/www/android/gradle/wrapper/ # STATIC
-    - assets/www/lib/ # STATIC
-    - assets/www/public/ # STATIC
-    - assets/www/scripts/ # STATIC
-    - assets/www/src/ # STATIC
-    - assets/www/src/components/ # STATIC
-    - assets/www/src/hooks/ # STATIC
-    - assets/www/src/services/ # STATIC
     # END ASSETS
