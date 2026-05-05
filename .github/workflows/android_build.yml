@@ -60,7 +60,50 @@ jobs:
         run: |
           if [ ! -f android/app/build.gradle ] && [ ! -f android/app/build.gradle.kts ]; then
             echo "Android scaffold eksik, flutter create ile olusturuluyor..."
-            flutter create . --platforms=android --org com.kelime_oyunu
+            flutter create . --platforms=android --org com.kelime
+          fi
+
+      - name: Flutter embedding health check (v1 guard)
+        run: |
+          BAD=0
+          TMP_REPORT="$(mktemp)"
+          if [ -d android ]; then
+            if grep -R --line-number "io\.flutter\.app\.FlutterActivity" android >"$TMP_REPORT" 2>/dev/null; then
+              echo "ERROR: Deprecated Flutter v1 embedding detected: io.flutter.app.FlutterActivity"
+              cat "$TMP_REPORT"
+              BAD=1
+            fi
+            if grep -R --line-number "io\.flutter\.app\.FlutterApplication" android >>"$TMP_REPORT" 2>/dev/null; then
+              echo "ERROR: Deprecated Flutter v1 embedding detected: io.flutter.app.FlutterApplication"
+              cat "$TMP_REPORT"
+              BAD=1
+            fi
+            if grep -R --line-number "FlutterFragmentActivity" android/app/src/main/AndroidManifest.xml 2>/dev/null; then
+              echo "INFO: FlutterFragmentActivity reference found in manifest (verify activity class implementation)."
+            fi
+          fi
+
+          if [ "$BAD" -ne 0 ]; then
+            {
+              echo "## Flutter Embedding Health Check"
+              echo ""
+              echo "- Status: FAILED"
+              echo "- Reason: Deprecated Android v1 embedding usage detected."
+              echo ""
+              echo "### Matches"
+              echo '```text'
+              cat "$TMP_REPORT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Build stopped due to deprecated Android v1 embedding usage."
+            exit 1
+          else
+            {
+              echo "## Flutter Embedding Health Check"
+              echo ""
+              echo "- Status: PASSED"
+              echo "- Deprecated Android v1 embedding usage not found."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Flutter pub get

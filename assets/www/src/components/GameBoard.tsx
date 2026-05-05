@@ -487,9 +487,9 @@ export default function GameBoard() {
                                   transition={{ duration: 0.4, ease: "easeOut" }}
                                   className="absolute inset-0"
                                 >
-                                  <div className="hexagon w-full h-full bg-slate-800/90 border border-slate-700/50 flex items-center justify-center overflow-hidden">
-                                    <div className="hexagon w-[85%] h-[85%] bg-slate-900/80 shadow-inner flex items-center justify-center">
-                                       <div className="w-full h-full bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.1)_0%,transparent_70%)]" />
+                                  <div className="hexagon w-full h-full bg-slate-200/90 border border-slate-300/50 flex items-center justify-center overflow-hidden">
+                                    <div className="hexagon w-[85%] h-[85%] bg-slate-50/80 shadow-inner flex items-center justify-center">
+                                       <div className="w-full h-full bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.2)_0%,transparent_70%)]" />
                                     </div>
                                   </div>
                                 </motion.div>
