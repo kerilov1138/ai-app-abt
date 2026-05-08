@@ -1,24 +1,15 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
-import { viteSingleFile } from 'vite-plugin-singlefile';
+import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
-    plugins: [react(), tailwindcss(), viteSingleFile()],
-    build: {
-      reportCompressedSize: false,
-      cssCodeSplit: false,
-      assetsInlineLimit: 100000000,
-      rollupOptions: {
-        output: {
-          inlineDynamicImports: true,
-        },
-      },
+    plugins: [react(), tailwindcss()],
+    define: {
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
-    define: {},
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

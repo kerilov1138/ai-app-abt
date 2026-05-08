@@ -1,5 +1,6 @@
 {
-  "name": "Kelime Oyunu AI",
-  "description": "TV2'deki Kelime Oyunu yarışmasının sesli komutlarla oynanabilen AI sunuculu versiyonu.",
-  "requestFramePermissions": []
+  "name": "Şafak Öncü Farmakoloji - ATC Sınıflandırma Uygulaması",
+  "description": "Ortaokul öğrencileri için hazırlanmış, kapsamlı ATC ilaç sınıflandırması ve interaktif eğitim materyalleri içeren eczacılık uygulaması.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
