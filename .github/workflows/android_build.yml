@@ -56,7 +56,7 @@ jobs:
       - name: Initialize Flutter Project
         run: |
           # Use dynamic org to ensure unique package IDs (different apps)
-          flutter create . --platforms=android --org com.atc_uygulama
+          flutter create . --platforms=android --org com.video_zet
           rm -rf test 
       
       - name: Dynamic Asset Mapper (Register Global Assets)

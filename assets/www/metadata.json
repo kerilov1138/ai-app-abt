@@ -1,6 +1,11 @@
 {
-  "name": "Şafak Öncü Farmakoloji - ATC Sınıflandırma Uygulaması",
-  "description": "Ortaokul öğrencileri için hazırlanmış, kapsamlı ATC ilaç sınıflandırması ve interaktif eğitim materyalleri içeren eczacılık uygulaması.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
+  "name": "VideoÖzet",
+  "description": "YouTube videolarını analiz ederek özetler çıkaran ve anahtar kelime araması yapan akıllı asistan.",
+  "requestFramePermissions": [
+    "clipboard-read",
+    "clipboard-write"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
