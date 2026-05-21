@@ -1,11 +1,13 @@
 """
 YouTube Video Analiz & Yorumlayıcı
-Mobil Uyumlu Python Uygulaması — Kivy Tabanlı
+Python Masaüstü Uygulaması — Flet (Flutter) tabanlı
 """
 
-import subprocess, sys, os
+import subprocess
+import sys
+import os
 
-# ─── Otomatik bağımlılık yükleme ───
+# ─── Otomatik Bağımlılık Yükleme ───
 def _ensure(pkg, imp=None):
     try:
         __import__(imp or pkg)
@@ -16,84 +18,117 @@ def _ensure(pkg, imp=None):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 
-# Kivy ve diğer gerekli kütüphanelerin kurulduğundan emin ol
-_ensure('kivy')
+_ensure('flet')
 _ensure('google-genai', 'google.genai')
 _ensure('youtube-transcript-api', 'youtube_transcript_api')
 _ensure('requests')
 
-# Kivy Pencere Ayarları - Mobil görünüm simülasyonu (Desktop için)
-from kivy.config import Config
-Config.set('graphics', 'width', '450')
-Config.set('graphics', 'height', '800')
-Config.set('graphics', 'minimum_width', '350')
-Config.set('graphics', 'minimum_height', '600')
-
-import re, json, threading, time
-from urllib.parse import urlparse, parse_qs
+import flet as ft
 import requests
+import re
+import json
+import threading
+import time
+from urllib.parse import urlparse, parse_qs
 from google import genai
 from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi
 
-# Kivy UI Bileşenleri
-from kivy.app import App
-from kivy.lang import Builder
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.widget import Widget
-from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
-from kivy.uix.button import Button
-from kivy.uix.togglebutton import ToggleButton
-from kivy.uix.scrollview import ScrollView
-from kivy.uix.popup import Popup
-from kivy.properties import StringProperty, NumericProperty, BooleanProperty, ObjectProperty
-from kivy.clock import Clock
-from kivy.metrics import dp
-
 # ═══════════════════════════════════════════
-#  Sabitler & Temalar
+#  Sabitler
 # ═══════════════════════════════════════════
 API_KEY = 'AIzaSyDbT0aoruz3QmhXqVlAlYR7wurcSKDqCkE'
 MODEL   = 'gemini-2.5-flash'
 
+C = {
+    'bg':       '#0F0C29',
+    'bg2':      '#1A0533',
+    'card':     '#1E1A3A',
+    'purple':   '#BB86FC',
+    'purple_d': '#9B59B6',
+    'white':    '#FFFFFF',
+    'gray':     '#B3B3B3',
+    'input':    '#252040',
+    'user_bg':  '#2D1F5E',
+    'ai_bg':    '#161230',
+    'border':   '#302B63',
+}
+
 SYSTEM = (
     'Sen bir YouTube Video Analiz Asistanısın. '
-    'Görevin, sana verilen video transkriptini analiz etmek ve '
-    'kullanıcıya yardımcı olmaktır. Türkçe yanıt ver. Markdown formatı kullan. '
+    'Görevin, SADECE ve YALNIZCA sana verilen video transkriptini analiz etmek ve kullanıcıya yardımcı olmaktır. '
+    'Sadece transkriptte geçen konular hakkında konuşabilirsin. Transkript dışında hiçbir konuda bilgi veremezsin, '
+    'soru cevaplayamazsın veya genel sohbet edemezsin. Türkçe yanıt ver. Markdown formatı kullan. '
     'Yanıtlarında şu formatlama kurallarına uy: '
     '- Bölüm başlıkları için ## kullan. '
     '- Önemli kavramları **kalın** yaz. '
     '- Madde listeleri için - kullan. '
     '- Paragraflar arasında boşluk bırak. '
-    '- Akıcı, profesyonel ve kolay okunur bir dil kullan. '
-    'ÖNEMLİ KURALLAR: '
-    '1) Eğer kullanıcının sorusu video içeriğiyle doğrudan ilişkili değilse, '
-    'belirsizse veya transkriptte karşılığı yoksa, ASLA "bunu yapamam" veya '
-    '"bilgi bulunamadı" gibi sert bir ret mesajı verme. '
-    'Bunun yerine, yardımsever bir kısa açıklama yaz ve ardından '
-    '"Bu konularla ilgili sorabilirsiniz:" diyerek en fazla 3 alternatif soru öner. '
-    '2) Her öneriyi şu formatta yaz: <<ÖNERİ: alternatif soru metni>> '
-    '3) Öneriler, videonun gerçek içeriğine dayalı ve kullanıcının niyetine '
-    'yakın konularda olsun. '
-    '4) Eğer soru videoyla tamamen alakasızsa bile, videonun ana konularından '
-    '3 tane ilgili soru öner. '
-    '5) Eğer soru açık ve videoya uygunsa, direkt yanıtla; öneri ekleme zorunlu değil.'
+    'ÖNEMLİ KURALLAR:\n'
+    '1) EĞER KULLANICI VİDEO DIŞI/ALAKASIZ BİR SORU SORARSA:\n'
+    '   Kesinlikle soruyu cevaplama. Kibarca bu sorunun video içeriğiyle ilgili olmadığını belirt. '
+    '   Ardından, "Video içeriğine dayanarak şu soruları sorabilirsiniz:" diyerek video ile %100 ilgili en fazla 3 alternatif soru öner.\n'
+    '2) EĞER KULLANICI VİDEO İLE İLGİLİ AMA VİDEODA TAM OLARAK CEVABI OLMAYAN BİR SORU SORARSA (veya hatalı/eksik bir soru sorarsa):\n'
+    '   Kullanıcıya bu spesifik sorunun cevabının videoda tam olarak geçmediğini güzelce açıkla. '
+    '   Ardından "Bunu mu demek istediniz?" diyerek, kullanıcının niyetine en yakın ve SADECE videoda geçen konulara dayalı en fazla 3 alternatif soru öner.\n'
+    '3) ÖNERİ FORMATI:\n'
+    '   Her öneriyi mutlaka tam olarak şu formatta yazmalısın: <<ÖNERİ: alternatif soru metni>>\n'
+    '4) Sınırlama: Kesinlikle video dışına çıkma. Hem sen hem de kullanıcı sadece video içeriği ve kullanıcı tarafından konulan URL hakkında konuşabilirsiniz.'
 )
 
+# Clipboard Helper function (independent from Flet version changes)
+def set_clipboard_text(text):
+    try:
+        import tkinter as tk
+        r = tk.Tk()
+        r.withdraw()
+        r.clipboard_clear()
+        r.clipboard_append(text)
+        r.update()
+        r.destroy()
+        return True
+    except Exception:
+        return False
 
 # ═══════════════════════════════════════════
-#  Backend Logic (Birebir Aynı)
+#  Backend
 # ═══════════════════════════════════════════
+class CallableString(str):
+    def __new__(cls, value):
+        return super().__new__(cls, value)
+    
+    def __call__(self, url):
+        from urllib.parse import urlparse, parse_qs
+        try:
+            p = urlparse(url)
+            if p.hostname in ('youtu.be',):
+                return p.path[1:]
+            if p.hostname in ('www.youtube.com', 'youtube.com', 'm.youtube.com'):
+                if p.path == '/watch':
+                    return parse_qs(p.query).get('v', [None])[0]
+                for prefix in ('/embed/', '/v/', '/shorts/'):
+                    if p.path.startswith(prefix):
+                        return p.path.split('/')[2]
+        except Exception:
+            pass
+        return None
+
 class Analyzer:
     def __init__(self):
-        self.config_file = 'config.json'
+        self.config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
         self.api_key = self.load_api_key()
-        self.client = genai.Client(api_key=self.api_key)
-        self.ytt_api = YouTubeTranscriptApi()
+        self.client = None
+        if self.api_key:
+            self.init_client()
         self.chat = None
         self.transcript = ''
         self.title = ''
+        self.author = ''
+        self.thumbnail_url = ''
+        self.video_id = CallableString('')
+
+    def init_client(self):
+        self.client = genai.Client(api_key=self.api_key)
 
     def load_api_key(self):
         try:
@@ -107,15 +142,24 @@ class Analyzer:
 
     def save_api_key(self, key):
         self.api_key = key.strip() if key.strip() else API_KEY
-        self.client = genai.Client(api_key=self.api_key)
+        self.init_client()
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump({'api_key': self.api_key}, f, indent=4)
         except Exception:
             pass
 
+    def clear_api_key(self):
+        self.api_key = ''
+        self.client = None
+        try:
+            if os.path.exists(self.config_file):
+                os.remove(self.config_file)
+        except Exception:
+            pass
+
     @staticmethod
-    def video_id(url):
+    def get_video_id(url):
         p = urlparse(url)
         if p.hostname in ('youtu.be',):
             return p.path[1:]
@@ -127,23 +171,42 @@ class Analyzer:
                     return p.path.split('/')[2]
         return None
 
-    def fetch_info(self, url):
+    def fetch_video_info(self, url):
+        self.video_id = CallableString(self.get_video_id(url) or '')
+        if not self.video_id:
+            raise Exception('Geçersiz YouTube URL')
         try:
             r = requests.get(f'https://www.youtube.com/oembed?url={url}&format=json', timeout=10)
-            self.title = r.json().get('title', 'Bilinmeyen Video')
+            data = r.json()
+            self.title = data.get('title', 'Bilinmeyen Video')
+            self.author = data.get('author_name', 'Bilinmeyen Kanal')
+            self.thumbnail_url = data.get('thumbnail_url', f'https://img.youtube.com/vi/{self.video_id}/sddefault.jpg')
         except Exception:
             self.title = 'Bilinmeyen Video'
+            self.author = 'Bilinmeyen Kanal'
+            self.thumbnail_url = f'https://img.youtube.com/vi/{self.video_id}/sddefault.jpg'
         return self.title
 
-    def fetch_transcript(self, vid):
+    def fetch_transcript(self):
         try:
-            snippets = self.ytt_api.fetch(vid, languages=['tr', 'en'])
-        except Exception:
-            snippets = self.ytt_api.fetch(vid, languages=['en'])
-        self.transcript = ' '.join(s.text for s in snippets)
+            api = YouTubeTranscriptApi()
+            tl = api.list(self.video_id)
+            try:
+                t = tl.find_transcript(['tr'])
+            except Exception:
+                try:
+                    t = tl.find_transcript(['en'])
+                except Exception:
+                    t = next(iter(tl))
+            snippets = t.fetch()
+            self.transcript = ' '.join(s.get('text', '') if isinstance(s, dict) else getattr(s, 'text', '') for s in snippets)
+        except Exception as e:
+            raise Exception(f'Altyazı alınamadı: {str(e)}')
         return self.transcript
 
     def summarize(self, long_ver=False):
+        if not self.client:
+            raise Exception('API istemcisi başlatılamadı. API Key kontrol edin.')
         self.chat = self.client.chats.create(
             model=MODEL,
             config=types.GenerateContentConfig(
@@ -189,784 +252,797 @@ class Analyzer:
 
     @staticmethod
     def generate_fallback_suggestions(query):
-        fallbacks = [
+        return [
             f'Bu videoda "{query[:30]}" konusu ele alınıyor mu?',
             'Videonun ana konusu nedir?',
             'Videodaki en önemli noktalar nelerdir?',
         ]
-        return fallbacks
-
 
 # ═══════════════════════════════════════════
-#  Markdown → Kivy Rich Text Çevirici
+#  UI (Flet)
 # ═══════════════════════════════════════════
-def markdown_to_kivy(md_text):
-    lines = md_text.split('\n')
-    kivy_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('### '):
-            text = stripped[4:]
-            text = parse_inline_kivy(text)
-            kivy_lines.append(f"[size=16sp][b]{text}[/b][/size]")
-        elif stripped.startswith('## '):
-            text = stripped[3:]
-            text = parse_inline_kivy(text)
-            kivy_lines.append(f"[size=18sp][b][color=BB86FC]{text}[/color][/b][/size]")
-        elif stripped.startswith('# '):
-            text = stripped[2:]
-            text = parse_inline_kivy(text)
-            kivy_lines.append(f"[size=22sp][b][color=BB86FC]{text}[/color][/b][/size]")
-        elif stripped.startswith('- ') or stripped.startswith('* '):
-            text = stripped[2:]
-            text = parse_inline_kivy(text)
-            kivy_lines.append(f"  [color=BB86FC]•[/color] {text}")
-        elif stripped.startswith('---') or stripped.startswith('***'):
-            kivy_lines.append("[color=302B63]────────────────────────────────────────[/color]")
-        elif stripped == '':
-            kivy_lines.append('')
-        else:
-            text = parse_inline_kivy(stripped)
-            kivy_lines.append(text)
-    return '\n'.join(kivy_lines)
-
-
-def parse_inline_kivy(line):
-    # Kivy'nin yerleşik markup işaretlerini bozmamak için önce köşeli parantezleri escape edelim
-    line = line.replace('[', '[[').replace(']', ']]')
+def main(page: ft.Page):
+    page.title = "YouTube Video Analiz & Yorumlayıcı"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.padding = 0
+    page.bgcolor = C['bg']
     
-    # **kalın** -> [b]kalın[/b]
-    # *italik* -> [i][color=9B59B6]italik[/color][/i]
-    parts = re.split(r'(\*\*.*?\*\*|\*.*?\*)', line)
-    new_parts = []
-    for part in parts:
-        if part.startswith('**') and part.endswith('**'):
-            new_parts.append(f"[b]{part[2:-2]}[/b]")
-        elif part.startswith('*') and part.endswith('*'):
-            new_parts.append(f"[i][color=9B59B6]{part[1:-1]}[/color][/i]")
-        else:
-            new_parts.append(part)
-    return ''.join(new_parts)
+    # Pencere Boyutları
+    page.window_width = 960
+    page.window_height = 800
+    page.window_min_width = 750
+    page.window_min_height = 600
 
+    analyzer = Analyzer()
 
-# ═══════════════════════════════════════════
-#  Kivy Modern Popup Yardımcısı
-# ═══════════════════════════════════════════
-def show_popup(title, message, is_error=False):
-    content = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(10))
-    msg_lbl = Label(
-        text=message, 
-        halign='center', 
-        valign='middle', 
-        markup=True,
-        color=[1, 1, 1, 1] if not is_error else [1, 0.4, 0.4, 1]
+    # Uygulama Durumu
+    state = type('State', (), {
+        'length': 'short',          # 'short' veya 'long'
+        'is_loading': False,        # Video analiz yükleniyor mu
+        'is_chat_loading': False,   # Soru yükleniyor mu
+        'ai_summary': '',
+        'summary_suggestions': [],  # Özet altındaki öneri soruları
+        'chat_messages': [],        # [{'text': str, 'is_user': bool, 'suggestions': list}]
+        'current_view': 'home',     # 'home' veya 'result'
+        'analysis_completed': False,
+        'progress_value': 0.0,
+        'progress_status': '',
+    })()
+
+    # UI Bileşenleri
+    url_input = ft.TextField(
+        hint_text="https://youtube.com/watch?v=...",
+        prefix_icon=ft.Icons.LINK,
+        bgcolor="#77302B63",
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=C['purple'],
+        border_radius=16,
+        text_style=ft.TextStyle(color=ft.Colors.WHITE),
+        hint_style=ft.TextStyle(color=C['gray']),
+        expand=True,
     )
-    msg_lbl.bind(size=msg_lbl.setter('text_size'))
-    content.add_widget(msg_lbl)
-    
-    close_btn = Button(
-        text='Tamam', 
-        size_hint_y=None, 
-        height=dp(40),
-        background_color=[0, 0, 0, 0],
-        color=[15/255, 12/255, 41/255, 1],
-        bold=True
+
+    api_key_input = ft.TextField(
+        hint_text="Google AI Studio API Key...",
+        prefix_icon=ft.Icons.VPN_KEY,
+        password=True,
+        can_reveal_password=True,
+        bgcolor="#77302B63",
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=C['purple'],
+        border_radius=16,
+        text_style=ft.TextStyle(color=ft.Colors.WHITE),
+        hint_style=ft.TextStyle(color=C['gray']),
     )
-    with close_btn.canvas.before:
-        from kivy.graphics import Color, RoundedRectangle
-        Color(187/255, 134/255, 252/255, 1)
-        close_btn.bg_rect = RoundedRectangle(radius=[6, 6, 6, 6])
-    close_btn.bind(pos=lambda obj, val: setattr(obj.bg_rect, 'pos', val))
-    close_btn.bind(size=lambda obj, val: setattr(obj.bg_rect, 'size', val))
-    
-    content.add_widget(close_btn)
-    
-    popup = Popup(
-        title=title,
-        content=content,
-        size_hint=(0.85, 0.35),
-        title_color=[187/255, 134/255, 252/255, 1],
-        background_color=[30/255, 26/255, 58/255, 0.95]
+
+    chat_input = ft.TextField(
+        hint_text="Video hakkında bir şey sorun...",
+        bgcolor="#77302B63",
+        border_color=ft.Colors.TRANSPARENT,
+        focused_border_color=C['purple'],
+        border_radius=16,
+        text_style=ft.TextStyle(color=ft.Colors.WHITE),
+        hint_style=ft.TextStyle(color=C['gray']),
+        expand=True,
+        on_submit=lambda _: send_chat_message(),
     )
-    close_btn.bind(on_release=popup.dismiss)
-    popup.open()
 
+    # Kalıcı Progress Kontrolleri (thread-safe güncellemeler için)
+    _progress_status_text = ft.Text("", size=13, color=C['gray'], weight=ft.FontWeight.W_500)
+    _progress_pct_text = ft.Text("%0", size=14, color="#BB86FC", weight=ft.FontWeight.BOLD)
+    _progress_bar = ft.ProgressBar(value=0, color="#BB86FC", bgcolor="#1A0533", height=8, border_radius=4)
+    _action_container = ft.Container(width=float("inf"))
 
-# ═══════════════════════════════════════════
-#  Kivy Custom Arayüz Bileşenleri (KV String)
-# ═══════════════════════════════════════════
-KV_LAYOUT = """
-#:import dp kivy.metrics.dp
+    # Containers for dynamic UI updates
+    main_container = ft.Container(expand=True)
+    chat_list_column = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
 
-<ModernTextInput@TextInput>:
-    background_color: [0, 0, 0, 0]
-    foreground_color: [1, 1, 1, 1]
-    cursor_color: [187/255, 134/255, 252/255, 1]
-    hint_text_color: [179/255, 179/255, 179/255, 0.5]
-    padding: [14, 10, 14, 10]
-    multiline: False
-    size_hint_y: None
-    height: dp(42)
-    canvas.before:
-        Color:
-            rgba: [37/255, 32/255, 64/255, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [8, 8, 8, 8]
-        Color:
-            rgba: [48/255, 43/255, 99/255, 1] if not self.focus else [187/255, 134/255, 252/255, 1]
-        Line:
-            rounded_rectangle: [self.x, self.y, self.width, self.height, 8]
-            width: 1
-
-<ModernButton@Button>:
-    background_color: [0, 0, 0, 0]
-    color: [15/255, 12/255, 41/255, 1]
-    bold: True
-    size_hint_y: None
-    height: dp(42)
-    canvas.before:
-        Color:
-            rgba: [187/255, 134/255, 252/255, 1] if self.state == 'normal' else [155/255, 89/255, 182/255, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [8, 8, 8, 8]
-
-<ModernToggleButton@ToggleButton>:
-    background_color: [0, 0, 0, 0]
-    color: [187/255, 134/255, 252/255, 1] if self.state == 'normal' else [15/255, 12/255, 41/255, 1]
-    bold: True
-    size_hint_y: None
-    height: dp(36)
-    canvas.before:
-        Color:
-            rgba: [26/255, 5/255, 51/255, 1] if self.state == 'normal' else [187/255, 134/255, 252/255, 1]
-        RoundedRectangle:
-            pos: self.pos
-            size: self.size
-            radius: [6, 6, 6, 6]
-        Color:
-            rgba: [187/255, 134/255, 252/255, 1]
-        Line:
-            rounded_rectangle: [self.x, self.y, self.width, self.height, 6]
-            width: 1
-
-BoxLayout:
-    orientation: 'vertical'
-    canvas.before:
-        Color:
-            rgba: [15/255, 12/255, 41/255, 1]
-        Rectangle:
-            pos: self.pos
-            size: self.size
-
-    # Header
-    BoxLayout:
-        orientation: 'horizontal'
-        size_hint_y: None
-        height: dp(56)
-        padding: [16, 8, 16, 8]
-        spacing: 10
-        Label:
-            text: '🎬 YouTube Analiz'
-            font_size: '18sp'
-            bold: True
-            color: [187/255, 134/255, 252/255, 1]
-            halign: 'left'
-            valign: 'middle'
-            text_size: self.size
-        Button:
-            text: '⚙️ Ayarlar'
-            size_hint_x: None
-            width: dp(90)
-            size_hint_y: None
-            height: dp(36)
-            background_color: [0, 0, 0, 0]
-            color: [187/255, 134/255, 252/255, 1] if app.settings_height == 0 else [15/255, 12/255, 41/255, 1]
-            bold: True
-            pos_hint: {'center_y': 0.5}
-            canvas.before:
-                Color:
-                    rgba: [30/255, 26/255, 58/255, 1] if app.settings_height == 0 else [187/255, 134/255, 252/255, 1]
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [6, 6, 6, 6]
-            on_release: app.toggle_settings()
-
-    # Settings Panel (Collapsible)
-    BoxLayout:
-        id: settings_panel
-        orientation: 'vertical'
-        size_hint_y: None
-        height: app.settings_height
-        opacity: 1 if app.settings_height > 0 else 0
-        disabled: app.settings_height == 0
-        padding: [16, 4, 16, 4]
-        spacing: 6
-        canvas.before:
-            Color:
-                rgba: [26/255, 5/255, 51/255, 1]
-            Rectangle:
-                pos: self.pos
-                size: self.size
-        
-        BoxLayout:
-            orientation: 'horizontal'
-            spacing: 8
-            Label:
-                text: 'API Anahtarı:'
-                size_hint_x: None
-                width: dp(80)
-                font_size: '12sp'
-                bold: True
-                color: [1, 1, 1, 1]
-                halign: 'left'
-                valign: 'middle'
-                text_size: self.size
-            ModernTextInput:
-                id: api_entry
-                password: True
-                text: app.api_key
-                size_hint_y: None
-                height: dp(32)
-                padding: [8, 6, 8, 6]
-        
-        BoxLayout:
-            orientation: 'horizontal'
-            spacing: 10
-            size_hint_y: None
-            height: dp(32)
-            Widget:
-            Button:
-                text: 'Kaydet'
-                size_hint_x: None
-                width: dp(70)
-                background_color: [0, 0, 0, 0]
-                color: [15/255, 12/255, 41/255, 1]
-                bold: True
-                canvas.before:
-                    Color:
-                        rgba: [187/255, 134/255, 252/255, 1]
-                    RoundedRectangle:
-                        pos: self.pos
-                        size: self.size
-                        radius: [6, 6, 6, 6]
-                on_release: app.save_api_key(api_entry.text)
-            Button:
-                text: 'Sıfırla'
-                size_hint_x: None
-                width: dp(70)
-                background_color: [0, 0, 0, 0]
-                color: [187/255, 134/255, 252/255, 1]
-                bold: True
-                canvas.before:
-                    Color:
-                        rgba: [30/255, 26/255, 58/255, 1]
-                    RoundedRectangle:
-                        pos: self.pos
-                        size: self.size
-                        radius: [6, 6, 6, 6]
-                on_release: app.reset_api_key()
-
-    # URL Input Panel
-    BoxLayout:
-        orientation: 'horizontal'
-        size_hint_y: None
-        height: dp(54)
-        padding: [16, 4, 16, 4]
-        spacing: 8
-        ModernTextInput:
-            id: url_entry
-            hint_text: 'YouTube video URL yapıştırın...'
-            text: ''
-        ModernButton:
-            id: analyze_btn
-            text: '✦ Analiz'
-            size_hint_x: None
-            width: dp(80)
-            on_release: app.analyze_video(url_entry.text)
-
-    # Length & Status Row
-    BoxLayout:
-        orientation: 'horizontal'
-        size_hint_y: None
-        height: dp(40)
-        padding: [16, 2, 16, 2]
-        spacing: 6
-        ModernToggleButton:
-            id: short_btn
-            text: 'Kısa'
-            group: 'length'
-            state: 'down'
-            size_hint_x: None
-            width: dp(60)
-            allow_no_selection: False
-            on_release: app.set_is_long(False)
-        ModernToggleButton:
-            id: long_btn
-            text: 'Uzun'
-            group: 'length'
-            size_hint_x: None
-            width: dp(60)
-            allow_no_selection: False
-            on_release: app.set_is_long(True)
-        Label:
-            text: app.status_text
-            font_size: '12sp'
-            color: [179/255, 179/255, 179/255, 1]
-            halign: 'right'
-            valign: 'middle'
-            text_size: self.size
-
-    # Scrollable Content
-    ScrollView:
-        id: scroll_view
-        do_scroll_x: False
-        do_scroll_y: True
-        BoxLayout:
-            id: scroll_content
-            orientation: 'vertical'
-            size_hint_y: None
-            height: self.minimum_height
-            padding: [16, 8, 16, 8]
-            spacing: 12
-
-            # Video Title
-            Label:
-                text: app.video_title
-                font_size: '15sp'
-                bold: True
-                color: [1, 1, 1, 1]
-                size_hint_y: None
-                height: self.texture_size[1] + dp(8) if app.video_title else 0
-                opacity: 1 if app.video_title else 0
-                text_size: self.width, None
-                halign: 'left'
-                valign: 'top'
-
-            # Line Divider
-            Widget:
-                size_hint_y: None
-                height: dp(1) if app.video_title else 0
-                opacity: 1 if app.video_title else 0
-                canvas.before:
-                    Color:
-                        rgba: [48/255, 43/255, 99/255, 1]
-                    Rectangle:
-                        pos: self.pos
-                        size: self.size
-
-            # Summary Header
-            BoxLayout:
-                orientation: 'horizontal'
-                size_hint_y: None
-                height: dp(24) if app.summary_text else 0
-                opacity: 1 if app.summary_text else 0
-                spacing: 6
-                Label:
-                    text: '✦'
-                    font_size: '16sp'
-                    color: [187/255, 134/255, 252/255, 1]
-                    size_hint_x: None
-                    width: dp(16)
-                Label:
-                    text: 'AI Özet'
-                    font_size: '15sp'
-                    bold: True
-                    color: [187/255, 134/255, 252/255, 1]
-                    halign: 'left'
-                    valign: 'middle'
-                    text_size: self.size
-
-            # Summary Box Card
-            BoxLayout:
-                orientation: 'vertical'
-                size_hint_y: None
-                height: summary_lbl.height + dp(20) if app.summary_text else 0
-                opacity: 1 if app.summary_text else 0
-                padding: [14, 10, 14, 10]
-                canvas.before:
-                    Color:
-                        rgba: [30/255, 26/255, 58/255, 1]
-                    RoundedRectangle:
-                        pos: self.pos
-                        size: self.size
-                        radius: [8, 8, 8, 8]
-                    Color:
-                        rgba: [48/255, 43/255, 99/255, 1]
-                    Line:
-                        rounded_rectangle: [self.x, self.y, self.width, self.height, 8]
-                        width: 1
-                Label:
-                    id: summary_lbl
-                    text: app.summary_text
-                    markup: True
-                    font_size: '13sp'
-                    color: [1, 1, 1, 1]
-                    size_hint_y: None
-                    height: self.texture_size[1]
-                    text_size: self.width, None
-                    halign: 'left'
-                    valign: 'top'
-
-            # Chat Header
-            BoxLayout:
-                orientation: 'horizontal'
-                size_hint_y: None
-                height: dp(24) if app.chat_visible else 0
-                opacity: 1 if app.chat_visible else 0
-                spacing: 6
-                Label:
-                    text: '💬'
-                    font_size: '16sp'
-                    size_hint_x: None
-                    width: dp(16)
-                Label:
-                    text: 'Video Hakkında Soru Sor'
-                    font_size: '15sp'
-                    bold: True
-                    color: [1, 1, 1, 1]
-                    halign: 'left'
-                    valign: 'middle'
-                    text_size: self.size
-
-            # Chat Container
-            BoxLayout:
-                id: chat_container
-                orientation: 'vertical'
-                size_hint_y: None
-                height: self.minimum_height
-                spacing: 10
-
-    # Bottom Chat Panel (Only visible after analysis complete)
-    BoxLayout:
-        orientation: 'horizontal'
-        size_hint_y: None
-        height: dp(54) if app.chat_visible else 0
-        opacity: 1 if app.chat_visible else 0
-        disabled: not app.chat_visible
-        padding: [16, 6, 16, 6]
-        spacing: 8
-        canvas.before:
-            Color:
-                rgba: [26/255, 5/255, 51/255, 1]
-            Rectangle:
-                pos: self.pos
-                size: self.size
-        ModernTextInput:
-            id: chat_entry
-            hint_text: 'Video hakkında bir şey sorun...'
-            text: ''
-            on_text_validate: app.send_chat(chat_entry.text); chat_entry.text = ''
-        Button:
-            text: '➤'
-            size_hint_x: None
-            width: dp(46)
-            size_hint_y: None
-            height: dp(42)
-            background_color: [0, 0, 0, 0]
-            color: [15/255, 12/255, 41/255, 1]
-            font_size: '16sp'
-            bold: True
-            canvas.before:
-                Color:
-                    rgba: [187/255, 134/255, 252/255, 1]
-                RoundedRectangle:
-                    pos: self.pos
-                    size: self.size
-                    radius: [8, 8, 8, 8]
-            on_release: app.send_chat(chat_entry.text); chat_entry.text = ''
-"""
-
-
-# ═══════════════════════════════════════════
-#  Dinamik Chat Balonu & Öneri Bileşenleri
-# ═══════════════════════════════════════════
-class ChatBubble(BoxLayout):
-    bg_color = ObjectProperty([0.176, 0.122, 0.369, 1])
-    
-    def __init__(self, text, is_user=False, **kwargs):
-        super().__init__(**kwargs)
-        self.orientation = 'vertical'
-        self.size_hint_x = None
-        self.size_hint_y = None
-        self.padding = [dp(12), dp(8), dp(12), dp(8)]
-        
-        if is_user:
-            self.bg_color = [45/255, 31/255, 94/255, 1]
-        else:
-            self.bg_color = [22/255, 18/255, 48/255, 1]
-            
-        with self.canvas.before:
-            from kivy.graphics import Color, RoundedRectangle
-            self.canvas_color = Color(rgba=self.bg_color)
-            self.canvas_rect = RoundedRectangle(radius=[10, 10, 10, 10])
-            
-        self.bind(pos=self._update_rect, size=self._update_rect)
-        
-        self.label = Label(
-            text=text,
-            markup=True,
-            font_size='13sp',
-            color=[1, 1, 1, 1],
-            size_hint_y=None,
-            halign='left',
-            valign='top'
+    # Snackbar Helper
+    def show_toast(text, is_error=True):
+        page.snack_bar = ft.SnackBar(
+            content=ft.Text(text, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.RED_800 if is_error else ft.Colors.GREEN_800,
+            action=ft.SnackBarAction(label="Kapat", text_color=C['purple']),
         )
-        self.label.bind(width=lambda s, w: setattr(s, 'text_size', (w, None)))
-        self.label.bind(texture_size=self._update_height)
-        self.add_widget(self.label)
-        
-    def _update_rect(self, instance, value):
-        self.canvas_rect.pos = self.pos
-        self.canvas_rect.size = self.size
-        
-    def _update_height(self, instance, size):
-        self.label.height = size[1]
-        self.height = self.label.height + dp(16)
+        page.snack_bar.open = True
+        page.update()
 
+    # Toggle Length Action
+    def set_length(length_type):
+        state.length = length_type
+        refresh_ui()
 
-class ChatBubbleWrapper(BoxLayout):
-    def __init__(self, text, is_user=False, **kwargs):
-        super().__init__(orientation='horizontal', size_hint_y=None, spacing=dp(10), **kwargs)
-        self.bubble = ChatBubble(text, is_user=is_user)
+    # Reset API Key Dialog
+    def show_reset_dialog(e):
+        dialog_key_input = ft.TextField(
+            value=analyzer.api_key,
+            password=True,
+            can_reveal_password=True,
+            bgcolor="#77302B63",
+            border_color=ft.Colors.TRANSPARENT,
+            focused_border_color=C['purple'],
+            border_radius=12,
+            text_style=ft.TextStyle(color=ft.Colors.WHITE),
+            hint_text="Yeni API Key...",
+        )
         
-        # Parent genişliği değiştikçe balon genişliğini sınırla (%75)
-        self.bind(width=self._update_bubble_width)
+        def save_and_close(confirm_save):
+            if confirm_save:
+                new_key = dialog_key_input.value.strip()
+                if not new_key:
+                    show_toast("Lütfen geçerli bir API Key girin.")
+                    return
+                analyzer.save_api_key(new_key)
+                show_toast("API Key başarıyla güncellendi.", is_error=False)
+            else:
+                analyzer.clear_api_key()
+                show_toast("API Key silindi.", is_error=False)
+            
+            if hasattr(page, "close"):
+                page.close(dialog)
+            else:
+                dialog.open = False
+                page.update()
+            refresh_ui()
+
+        def cancel_dialog(_):
+            if hasattr(page, "close"):
+                page.close(dialog)
+            else:
+                dialog.open = False
+                page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("API Key Ayarları"),
+            content=ft.Column([
+                ft.Text("Mevcut API Key'i güncelleyin veya tamamen silin:", size=13, color=C['gray']),
+                ft.Container(height=8),
+                dialog_key_input
+            ], tight=True, spacing=8),
+            actions=[
+                ft.TextButton("İptal", on_click=cancel_dialog),
+                ft.TextButton("Sil", on_click=lambda _: save_and_close(False), style=ft.ButtonStyle(color=ft.Colors.RED_ACCENT)),
+                ft.TextButton("Kaydet", on_click=lambda _: save_and_close(True), style=ft.ButtonStyle(color=C['purple'])),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
         
-        if is_user:
-            self.add_widget(Widget()) # Sol boşluk (Sağa yaslama)
-            self.add_widget(self.bubble)
+        if hasattr(page, "open"):
+            page.open(dialog)
         else:
-            self.add_widget(self.bubble)
-            self.add_widget(Widget()) # Sağ boşluk (Sola yaslama)
-            
-        self.height = self.bubble.height
-        self.bubble.bind(height=self._update_height)
-        
-    def _update_bubble_width(self, instance, width):
-        self.bubble.width = width * 0.75
-        
-    def _update_height(self, instance, val):
-        self.height = val + dp(6)
+            if dialog not in page.overlay:
+                page.overlay.append(dialog)
+            dialog.open = True
+            page.update()
 
+    # Save API Key Action
+    def save_api_key(e):
+        key = api_key_input.value.strip()
+        if not key:
+            show_toast("Lütfen geçerli bir API Key girin.")
+            return
+        analyzer.save_api_key(key)
+        show_toast("API Key başarıyla kaydedildi.", is_error=False)
+        refresh_ui()
 
-class SuggestionCard(BoxLayout):
-    def __init__(self, suggestions, app_ref, **kwargs):
-        super().__init__(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(6), **kwargs)
-        self.app_ref = app_ref
-        
-        with self.canvas.before:
-            from kivy.graphics import Color, RoundedRectangle, Line
-            Color(28/255, 22/255, 64/255, 1)
-            self.bg_rect = RoundedRectangle(radius=[10, 10, 10, 10])
-            Color(187/255, 134/255, 252/255, 1)
-            self.bg_line = Line(width=1, radius=[10, 10, 10, 10])
-            
-        self.bind(pos=self._update_canvas, size=self._update_canvas)
-        
-        # Başlık
-        hdr = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(20), spacing=dp(6))
-        hdr.add_widget(Label(text='🔍', font_size='13sp', size_hint_x=None, width=dp(16)))
-        hdr.add_widget(Label(
-            text='Bunu mu demek istediniz?', 
-            font_size='13sp', 
-            bold=True, 
-            color=[187/255, 134/255, 252/255, 1], 
-            halign='left',
-            valign='middle'
-        ))
-        # Başlık hizalama desteği
-        hdr.children[0].bind(size=hdr.children[0].setter('text_size'))
-        self.add_widget(hdr)
-        
-        self.btn_height = dp(36)
-        self.total_buttons = len(suggestions)
-        
-        for s in suggestions:
-            btn = Button(
-                text=f'→  {s}',
-                font_size='12sp',
-                color=[0.88, 0.88, 0.88, 1],
-                size_hint_y=None,
-                height=self.btn_height,
-                background_color=[0, 0, 0, 0],
-                halign='left',
-                valign='middle',
-                padding=[dp(10), dp(2)]
+    # Result Screen Transition Click Handler
+    def show_result_view_clicked(e):
+        state.current_view = 'result'
+        refresh_ui()
+
+    # ─── Hafif Progress Güncelleyiciler (thread-safe) ───
+    def update_progress_display():
+        """Sadece progress kontrollerinin değerlerini günceller. UI ağacını yeniden oluşturmaz."""
+        try:
+            _progress_status_text.value = state.progress_status
+            _progress_pct_text.value = f"%{int(state.progress_value * 100)}"
+            _progress_bar.value = state.progress_value
+            page.update()
+        except Exception:
+            pass
+
+    def update_action_area():
+        """action_container içeriğini mevcut state'e göre günceller."""
+        if state.is_loading:
+            _action_container.content = ft.Column([
+                ft.Row([_progress_status_text, _progress_pct_text],
+                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                _progress_bar,
+            ], spacing=8)
+        elif state.analysis_completed:
+            _action_container.content = ft.Column([
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.CHECK_CIRCLE, size=18, color="#0F0C29"),
+                        ft.Text("Analiz Sonucu Tıkla", weight=ft.FontWeight.BOLD, color="#0F0C29"),
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.Colors.GREEN_400,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=show_result_view_clicked,
+                    height=52,
+                ),
+                ft.Button(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.AUTO_AWESOME, size=18, color="#BB86FC"),
+                        ft.Text("YENİDEN ANALİZ ET", weight=ft.FontWeight.BOLD, color="#BB86FC"),
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.Colors.TRANSPARENT,
+                    style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                    on_click=start_analysis,
+                    height=52,
+                )
+            ], spacing=10)
+        else:
+            _action_container.content = ft.Button(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.AUTO_AWESOME, size=18, color="#0F0C29"),
+                    ft.Text("ANALİZ ET", weight=ft.FontWeight.BOLD, color="#0F0C29"),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                bgcolor="#BB86FC",
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                on_click=start_analysis,
+                height=52,
             )
-            btn.bind(size=btn.setter('text_size'))
-            
-            with btn.canvas.before:
-                Color(30/255, 26/255, 58/255, 1)
-                btn.bg_rect = RoundedRectangle(radius=[6, 6, 6, 6])
-                Color(48/255, 43/255, 99/255, 1)
-                btn.bg_line = Line(width=1, radius=[6, 6, 6, 6])
-                
-            btn.bind(pos=self._update_btn_canvas, size=self._update_btn_canvas)
-            btn.bind(on_release=self._on_btn_click)
-            self.add_widget(btn)
-            
-        self.height = dp(20 + 8) + (self.btn_height + dp(6)) * self.total_buttons + dp(12)
-        
-    def _update_canvas(self, instance, value):
-        self.bg_rect.pos = self.pos
-        self.bg_rect.size = self.size
-        self.bg_line.rounded_rectangle = [self.x, self.y, self.width, self.height, 10]
-        
-    def _update_btn_canvas(self, btn, value):
-        btn.bg_rect.pos = btn.pos
-        btn.bg_rect.size = btn.size
-        btn.bg_line.rounded_rectangle = [btn.x, btn.y, btn.width, btn.height, 6]
-        
-    def _on_btn_click(self, btn):
-        text = btn.text[3:].strip()
-        self.app_ref.send_chat(text)
 
-
-# ═══════════════════════════════════════════
-#  Kivy Main App Sınıfı
-# ═══════════════════════════════════════════
-class MainApp(App):
-    settings_height = NumericProperty(0)
-    api_key = StringProperty('')
-    status_text = StringProperty('')
-    video_title = StringProperty('')
-    summary_text = StringProperty('')
-    chat_visible = BooleanProperty(False)
-    
-    def build(self):
-        self.title = 'YouTube Video Analiz & Yorumlayıcı'
-        self.analyzer = Analyzer()
-        self.api_key = self.analyzer.api_key
-        self.is_long = False
-        
-        # Arayüz tasarım şablonunu yükle
-        root = Builder.load_string(KV_LAYOUT)
-        return root
-
-    def toggle_settings(self):
-        if self.settings_height == 0:
-            self.settings_height = dp(76)
-        else:
-            self.settings_height = 0
-
-    def save_api_key(self, key):
-        if not key.strip():
-            show_popup('Uyarı', 'Lütfen geçerli bir API Anahtarı girin.', is_error=True)
+    # Main Analysis Flow
+    def start_analysis(e):
+        url = url_input.value.strip()
+        if not url:
+            show_toast("Lütfen bir YouTube URL'si girin.")
             return
-        self.analyzer.save_api_key(key)
-        self.api_key = self.analyzer.api_key
-        show_popup('Başarılı', 'Gemini API Anahtarı başarıyla güncellendi!')
-        self.toggle_settings()
-
-    def reset_api_key(self):
-        self.analyzer.save_api_key(API_KEY)
-        self.api_key = self.analyzer.api_key
-        self.root.ids.api_entry.text = self.api_key
-        show_popup('Sıfırlandı', 'API Anahtarı varsayılan sisteme sıfırlandı.')
-        self.toggle_settings()
-
-    def set_is_long(self, val):
-        self.is_long = val
-
-    def analyze_video(self, url):
-        url = url.strip()
-        if not url or 'URL' in url:
-            show_popup('Uyarı', 'Lütfen bir YouTube URL girin.', is_error=True)
+        if not analyzer.api_key:
+            show_toast("Lütfen önce bir API Key ayarlayın.")
             return
-        vid = self.analyzer.video_id(url)
-        if not vid:
-            show_popup('Hata', 'Geçersiz YouTube URL.', is_error=True)
-            return
-            
-        self.root.ids.analyze_btn.disabled = True
-        self.root.ids.analyze_btn.text = '⏳ ...'
-        self.status_text = 'Video bilgileri alınıyor...'
-        
-        # Eski sohbet ve özetleri temizle
-        self.root.ids.chat_container.clear_widgets()
-        self.chat_visible = False
-        self.summary_text = ''
-        self.video_title = ''
-        
-        def task():
+
+        state.is_loading = True
+        state.analysis_completed = False
+        state.progress_value = 0.0
+        state.progress_status = "Başlatılıyor..."
+        update_action_area()
+        page.update()
+
+        def analyze_thread():
+            gemini_done = [False]
+
+            def smooth_progress_ticker():
+                while not gemini_done[0] and state.progress_value < 0.95:
+                    time.sleep(0.3)
+                    if gemini_done[0]:
+                        break
+                    if state.progress_value < 0.90:
+                        state.progress_value += 0.02
+                        update_progress_display()
+
             try:
-                self.analyzer.fetch_info(url)
-                Clock.schedule_once(lambda dt: setattr(self, 'video_title', f'📺  {self.analyzer.title}'))
-                Clock.schedule_once(lambda dt: setattr(self, 'status_text', 'Transkript çekiliyor...'))
-                
-                self.analyzer.fetch_transcript(vid)
-                Clock.schedule_once(lambda dt: setattr(self, 'status_text', 'Gemini ile özetleniyor...'))
-                
-                summary = self.analyzer.summarize(long_ver=self.is_long)
-                clean, _ = self.analyzer.parse_suggestions(summary)
-                
-                kivy_summary = markdown_to_kivy(clean)
-                Clock.schedule_once(lambda dt: setattr(self, 'summary_text', kivy_summary))
-                Clock.schedule_once(lambda dt: setattr(self, 'status_text', '✓ Analiz tamamlandı'))
-                Clock.schedule_once(lambda dt: setattr(self, 'chat_visible', True))
-            except Exception as e:
-                Clock.schedule_once(lambda dt: show_popup('Hata', str(e), is_error=True))
-                Clock.schedule_once(lambda dt: setattr(self, 'status_text', ''))
+                # Aşama 1: Video bilgileri
+                state.progress_value = 0.10
+                state.progress_status = "Video bilgileri alınıyor..."
+                update_progress_display()
+                analyzer.fetch_video_info(url)
+
+                # Aşama 2: Altyazılar
+                state.progress_value = 0.30
+                state.progress_status = "Video altyazıları indiriliyor..."
+                update_progress_display()
+                analyzer.fetch_transcript()
+
+                # Aşama 3: Yapay zeka analizi (ticker ile pürüzsüz ilerleme)
+                state.progress_value = 0.40
+                state.progress_status = "Yapay zeka ile video analiz ediliyor..."
+                update_progress_display()
+                page.run_thread(smooth_progress_ticker)
+
+                summary_text = analyzer.summarize(long_ver=(state.length == 'long'))
+                gemini_done[0] = True
+
+                # Aşama 4: Sonuçlar işleniyor
+                state.progress_value = 0.92
+                state.progress_status = "Analiz sonuçları işleniyor..."
+                update_progress_display()
+                clean_summary, suggestions = analyzer.parse_suggestions(summary_text)
+
+                state.ai_summary = clean_summary
+                if not suggestions:
+                    suggestions = analyzer.generate_fallback_suggestions(analyzer.title)
+                state.summary_suggestions = suggestions
+                state.chat_messages = []
+
+                # Aşama 5: Tamamlandı!
+                state.progress_value = 1.0
+                state.progress_status = "Analiz başarıyla tamamlandı!"
+                update_progress_display()
+                time.sleep(0.5)
+                state.analysis_completed = True
+            except Exception as ex:
+                state.analysis_completed = False
+                state.current_view = 'home'
+                show_toast(str(ex))
             finally:
-                def restore_btn(dt):
-                    self.root.ids.analyze_btn.disabled = False
-                    self.root.ids.analyze_btn.text = '✦ Analiz'
-                Clock.schedule_once(restore_btn)
-                
-        threading.Thread(target=task, daemon=True).start()
+                gemini_done[0] = True
+                state.is_loading = False
+                update_action_area()
+                page.update()
 
-    def send_chat(self, msg):
-        msg = msg.strip()
-        if not msg or 'sorun' in msg:
-            return
-            
-        self.add_bubble(msg, is_user=True)
-        
-        def task():
+        page.run_thread(analyze_thread)
+
+    # Regenerate Summary Flow
+    def regenerate_summary(length_type=None):
+        if length_type:
+            state.length = length_type
+        state.is_loading = True
+        refresh_ui()
+
+        def regen_thread():
             try:
-                resp = self.analyzer.send(msg)
-                clean, suggestions = self.analyzer.parse_suggestions(resp)
-                kivy_clean = markdown_to_kivy(clean)
-                Clock.schedule_once(lambda dt: self.add_bubble(kivy_clean, is_user=False))
-                if suggestions:
-                    Clock.schedule_once(lambda dt: self.add_suggestions(suggestions), 0.1)
-            except Exception as e:
-                err_str = str(e)
-                is_no_chat = 'Önce bir video' in err_str
-                if is_no_chat:
-                    Clock.schedule_once(lambda dt: self.add_bubble(
-                        '⚠️ Henüz bir video analiz edilmedi. Lütfen önce bir YouTube URL girin ve analiz edin.',
-                        is_user=False))
+                summary_text = analyzer.summarize(long_ver=(state.length == 'long'))
+                clean_summary, suggestions = analyzer.parse_suggestions(summary_text)
+                state.ai_summary = clean_summary
+                if not suggestions:
+                    suggestions = analyzer.generate_fallback_suggestions(analyzer.title)
+                state.summary_suggestions = suggestions
+            except Exception as ex:
+                show_toast(str(ex))
+            finally:
+                state.is_loading = False
+                refresh_ui()
+
+        page.run_thread(regen_thread)
+
+    # ─── Chat List Updater ───
+    def update_chat_list(skip_update=False):
+        chat_list_column.controls.clear()
+        for idx, m in enumerate(state.chat_messages):
+            if m['is_user']:
+                # User Bubble (Right Aligned)
+                chat_list_column.controls.append(
+                    ft.Row([
+                        ft.Container(
+                            content=ft.Text(m['text'], color=ft.Colors.WHITE, size=14),
+                            bgcolor="#2D1F5E",
+                            border_radius=ft.BorderRadius.only(top_left=16, top_right=16, bottom_left=16, bottom_right=4),
+                            border=ft.Border.all(1, "#3CBB86FC"),
+                            padding=14,
+                            width=500,
+                        )
+                    ], alignment=ft.MainAxisAlignment.END)
+                )
+            else:
+                # AI Bubble (Left Aligned)
+                ai_bubble = ft.Container(
+                    content=ft.Markdown(
+                        m['text'],
+                        selectable=True,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                    ),
+                    bgcolor="#161230",
+                    border_radius=ft.BorderRadius.only(top_left=16, top_right=16, bottom_left=4, bottom_right=16),
+                    border=ft.Border.all(1, "#14BB86FC"),
+                    padding=14,
+                    width=600,
+                )
+                
+                # Suggestions chips row
+                chips_list = []
+                suggestions = m.get('suggestions', [])
+                if not suggestions:
+                    # Generate beautiful context-aware fallback questions so they are ALWAYS clickable
+                    user_msgs = [x['text'] for x in state.chat_messages[:idx] if x['is_user']]
+                    last_query = user_msgs[-1] if user_msgs else "bu video"
+                    suggestions = analyzer.generate_fallback_suggestions(last_query)
+                
+                for s in suggestions:
+                    chips_list.append(
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=13, color="#BB86FC"),
+                                ft.Text(s, size=12, color="#BB86FC", weight=ft.FontWeight.W_500),
+                            ], spacing=4),
+                            bgcolor="#1CBB86FC",
+                            border=ft.Border.all(1, "#4CBB86FC"),
+                            border_radius=18,
+                            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                            on_click=lambda _, text=s: send_chat_message(text),
+                        )
+                    )
+                
+                if chips_list:
+                    chat_list_column.controls.append(
+                        ft.Column([
+                            ft.Row([ai_bubble], alignment=ft.MainAxisAlignment.START),
+                            ft.Container(
+                                content=ft.Row(chips_list, wrap=True, spacing=8, run_spacing=8),
+                                padding=ft.Padding.only(left=8, right=60),
+                            )
+                        ], spacing=8)
+                    )
                 else:
-                    fallbacks = self.analyzer.generate_fallback_suggestions(msg)
-                    Clock.schedule_once(lambda dt: self.add_bubble(
-                        '⚠️ Yanıt alınırken bir sorun oluştu. Aşağıdaki alternatif sorulardan birini deneyebilirsiniz:',
-                        is_user=False))
-                    Clock.schedule_once(lambda dt: self.add_suggestions(fallbacks), 0.1)
-                    
-        threading.Thread(target=task, daemon=True).start()
+                    chat_list_column.controls.append(
+                        ft.Row([ai_bubble], alignment=ft.MainAxisAlignment.START)
+                    )
 
-    def add_bubble(self, text, is_user=False):
-        wrapper = ChatBubbleWrapper(text, is_user=is_user)
-        self.root.ids.chat_container.add_widget(wrapper)
-        self.scroll_to_bottom()
+        # Chat Loading Indicator
+        if state.is_chat_loading:
+            chat_list_column.controls.append(
+                ft.Row([
+                    ft.Container(
+                        content=ft.Row([
+                            ft.ProgressRing(color="#BB86FC", width=20, height=20),
+                            ft.Text("Gemini yanıt yazıyor...", size=13, color=C['gray']),
+                        ], spacing=10),
+                        bgcolor="#161230",
+                        border_radius=ft.BorderRadius.only(top_left=16, top_right=16, bottom_left=4, bottom_right=16),
+                        border=ft.Border.all(1, "#14BB86FC"),
+                        padding=14,
+                    )
+                ], alignment=ft.MainAxisAlignment.START)
+            )
+        if not skip_update:
+            page.update()
 
-    def add_suggestions(self, suggestions):
-        card = SuggestionCard(suggestions, self)
-        self.root.ids.chat_container.add_widget(card)
-        self.scroll_to_bottom()
+    # Chat Message Send Flow
+    def send_chat_message(prefilled_msg=None):
+        msg = prefilled_msg or chat_input.value.strip()
+        if not msg:
+            return
+        if not prefilled_msg:
+            chat_input.value = ""
+        
+        # Add user message
+        state.chat_messages.append({'text': msg, 'is_user': True, 'suggestions': []})
+        state.is_chat_loading = True
+        update_chat_list()
+        scroll_chat_to_bottom()
 
-    def scroll_to_bottom(self):
-        def scroll(dt):
-            self.root.ids.scroll_view.scroll_y = 0
-        Clock.schedule_once(scroll, 0.1)
+        def chat_thread():
+            try:
+                resp = analyzer.send(msg)
+                clean_resp, suggestions = analyzer.parse_suggestions(resp)
+                state.chat_messages.append({
+                    'text': clean_resp,
+                    'is_user': False,
+                    'suggestions': suggestions
+                })
+            except Exception as ex:
+                # generate local fallbacks in case of transient API error
+                sugs = analyzer.generate_fallback_suggestions(msg)
+                state.chat_messages.append({
+                    'text': f"Hata oluştu: {str(ex)}\n\nLütfen tekrar deneyin.",
+                    'is_user': False,
+                    'suggestions': sugs
+                })
+            finally:
+                state.is_chat_loading = False
+                update_chat_list()
+                scroll_chat_to_bottom()
 
+        page.run_thread(chat_thread)
 
-# ═══════════════════════════════════════════
+    def scroll_chat_to_bottom():
+        time.sleep(0.1) # Wait briefly for container layout
+        chat_list_column.scroll_to(delta=1000, duration=300)
+        page.update()
+
+    # ─── Home Screen View Builder ───
+    def build_home_view():
+        # Banner/Header
+        header = ft.Column([
+            ft.Text(
+                "YouTube\nAnaliz & Özet",
+                size=38,
+                weight=ft.FontWeight.BOLD,
+                color="#BB86FC",
+                height=1.1,
+            ),
+            ft.Container(
+                content=ft.Text(
+                    "Design by Kerem Akşahin",
+                    size=12,
+                    weight=ft.FontWeight.W_500,
+                    color="#BB86FC",
+                ),
+                bgcolor="#1CBB86FC",
+                border_radius=6,
+                padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+            ),
+            ft.Text(
+                "Video URL'sini girin, yapay zeka saniyeler içinde özetlesin ve sorularınızı yanıtlasın.",
+                size=14,
+                color=C['gray'],
+            )
+        ], spacing=10)
+
+        # Length Chips
+        short_active = (state.length == 'short')
+        length_row = ft.Row([
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.SHORT_TEXT, size=16, color="#0F0C29" if short_active else ft.Colors.WHITE),
+                    ft.Text("Kısa Özet", size=13, weight=ft.FontWeight.BOLD, color="#0F0C29" if short_active else ft.Colors.WHITE),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                bgcolor="#BB86FC" if short_active else ft.Colors.TRANSPARENT,
+                border=ft.Border.all(1, "#BB86FC" if short_active else "#28B3B3B3"),
+                border_radius=12,
+                padding=ft.Padding.symmetric(vertical=14),
+                on_click=lambda _: set_length('short'),
+                expand=True,
+            ),
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.SUBJECT, size=16, color="#0F0C29" if not short_active else ft.Colors.WHITE),
+                    ft.Text("Uzun Özet", size=13, weight=ft.FontWeight.BOLD, color="#0F0C29" if not short_active else ft.Colors.WHITE),
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                bgcolor="#BB86FC" if not short_active else ft.Colors.TRANSPARENT,
+                border=ft.Border.all(1, "#BB86FC" if not short_active else "#28B3B3B3"),
+                border_radius=12,
+                padding=ft.Padding.symmetric(vertical=14),
+                on_click=lambda _: set_length('long'),
+                expand=True,
+            ),
+        ], spacing=10)
+
+        # Video Analiz Card
+        analiz_card = ft.Container(
+            bgcolor="#77302B63",
+            border=ft.Border.all(1, "#28BB86FC"),
+            border_radius=20,
+            padding=20,
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.PLAY_CIRCLE_FILL_ROUNDED, color="#BB86FC", size=20),
+                    ft.Text("Video Analiz", color=ft.Colors.WHITE, size=16, weight=ft.FontWeight.W_600),
+                ], spacing=8),
+                ft.Container(height=10),
+                ft.Row([url_input]),
+                ft.Container(height=10),
+                length_row,
+                ft.Container(height=16),
+                _action_container,
+            ], spacing=10)
+        )
+
+        # action_container içeriğini güncelle
+        update_action_area()
+
+        # API Key Section
+        if not analyzer.api_key:
+            api_card = ft.Container(
+                bgcolor="#77302B63",
+                border=ft.Border.all(1, "#28BB86FC"),
+                border_radius=20,
+                padding=20,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Icon(ft.Icons.KEY_ROUNDED, color="#BB86FC", size=20),
+                        ft.Text("API Key", color=ft.Colors.WHITE, size=16, weight=ft.FontWeight.W_600),
+                    ], spacing=8),
+                    ft.Container(height=10),
+                    api_key_input,
+                    ft.Container(height=12),
+                    ft.Container(
+                        content=ft.Button(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=18, color="#0F0C29"),
+                                ft.Text("KEY KAYDET", weight=ft.FontWeight.BOLD, color="#0F0C29"),
+                            ], alignment=ft.MainAxisAlignment.CENTER),
+                            bgcolor="#BB86FC",
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                            on_click=save_api_key,
+                            height=52,
+                        ),
+                        width=float("inf"),
+                    )
+                ])
+            )
+        else:
+            api_card = ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400, size=16),
+                    ft.TextButton(
+                        "API Key aktif  •  Değiştir",
+                        on_click=show_reset_dialog,
+                        style=ft.ButtonStyle(color=ft.Colors.GREEN_400),
+                    )
+                ], alignment=ft.MainAxisAlignment.CENTER),
+                margin=ft.Margin.symmetric(vertical=10),
+            )
+
+        # Wrap in Scroll Column
+        return ft.Column([
+            header,
+            ft.Container(height=26),
+            api_card,
+            analiz_card,
+        ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
+
+    # ─── Result Screen View Builder ───
+    def build_result_view():
+        # Title bar
+        def go_back(e):
+            state.current_view = 'home'
+            refresh_ui()
+
+        def copy_summary(e):
+            if set_clipboard_text(state.ai_summary):
+                show_toast("Özet panoya kopyalandı ✓", is_error=False)
+            else:
+                show_toast("Pano hatası oluştu.")
+
+        def share_summary(e):
+            link = f"https://youtube.com/watch?v={analyzer.video_id}"
+            share_text = f"*{analyzer.title}* - Video AI Özeti:\n\n{state.ai_summary}\n\nKaynak: {link}"
+            if set_clipboard_text(share_text):
+                show_toast("Özet ve video linki panoya kopyalandı ✓", is_error=False)
+            else:
+                show_toast("Paylaşım hatası.")
+
+        app_bar = ft.Row([
+            ft.IconButton(ft.Icons.ARROW_BACK_IOS_NEW, on_click=go_back, icon_color="#BB86FC"),
+            ft.Text("Analiz Sonucu", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, expand=True),
+            ft.IconButton(ft.Icons.COPY, on_click=copy_summary, icon_color=C['gray']),
+            ft.IconButton(ft.Icons.SHARE, on_click=share_summary, icon_color=C['gray']),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+        # Video Header Card
+        video_card = ft.Container(
+            bgcolor="#4c302B63",
+            border_radius=16,
+            padding=14,
+            content=ft.Row([
+                ft.Image(src=analyzer.thumbnail_url, width=140, height=84, fit="cover", border_radius=8),
+                ft.Container(width=12),
+                ft.Column([
+                    ft.Text(analyzer.title, size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
+                    ft.Text(analyzer.author, size=12, color=C['gray']),
+                ], expand=True, spacing=4)
+            ])
+        )
+
+        # Toggle & Refresh Row
+        short_active = (state.length == 'short')
+        toggle_regen_row = ft.Row([
+            ft.Row([
+                ft.Container(
+                    content=ft.Text("Kısa", size=12, weight=ft.FontWeight.BOLD, color="#0F0C29" if short_active else "#BB86FC"),
+                    bgcolor="#BB86FC" if short_active else ft.Colors.TRANSPARENT,
+                    border=ft.Border.all(1, "#BB86FC"),
+                    border_radius=8,
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                    on_click=lambda _: regenerate_summary('short'),
+                ),
+                ft.Container(
+                    content=ft.Text("Uzun", size=12, weight=ft.FontWeight.BOLD, color="#0F0C29" if not short_active else "#BB86FC"),
+                    bgcolor="#BB86FC" if not short_active else ft.Colors.TRANSPARENT,
+                    border=ft.Border.all(1, "#BB86FC"),
+                    border_radius=8,
+                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                    on_click=lambda _: regenerate_summary('long'),
+                ),
+            ], spacing=6),
+            ft.Container(
+                content=ft.Row([
+                    ft.Icon(ft.Icons.REFRESH, size=14, color="#BB86FC"),
+                    ft.Text("Yeniden", size=12, weight=ft.FontWeight.BOLD, color="#BB86FC"),
+                ]),
+                border=ft.Border.all(1, "#BB86FC"),
+                border_radius=8,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                on_click=lambda _: regenerate_summary(),
+            )
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+        # AI Summary Card
+        summary_chips = []
+        if hasattr(state, 'summary_suggestions') and state.summary_suggestions:
+            for s in state.summary_suggestions:
+                summary_chips.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=13, color="#BB86FC"),
+                            ft.Text(s, size=12, color="#BB86FC", weight=ft.FontWeight.W_500),
+                        ], spacing=4),
+                        bgcolor="#1CBB86FC",
+                        border=ft.Border.all(1, "#4CBB86FC"),
+                        border_radius=18,
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                        on_click=lambda _, text=s: send_chat_message(text),
+                    )
+                )
+
+        summary_card = ft.Container(
+            bgcolor="#77302B63",
+            border=ft.Border.all(1, "#28BB86FC"),
+            border_radius=20,
+            padding=20,
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.AUTO_AWESOME, color="#BB86FC", size=18),
+                    ft.Text("AI Özet", color="#BB86FC", size=16, weight=ft.FontWeight.W_600),
+                ], spacing=8),
+                ft.Container(height=10),
+                ft.Markdown(
+                    state.ai_summary,
+                    selectable=True,
+                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                ),
+                ft.Container(height=10) if summary_chips else ft.Container(),
+                ft.Row(summary_chips, wrap=True, spacing=8, run_spacing=8) if summary_chips else ft.Container(),
+            ])
+        )
+
+        # Chat Section Header
+        chat_header = ft.Column([
+            ft.Row([
+                ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, color=ft.Colors.WHITE, size=18),
+                ft.Text("Video Hakkında Soru Sor", color=ft.Colors.WHITE, size=16, weight=ft.FontWeight.W_600),
+            ], spacing=8),
+            ft.Text("Gemini, video içeriği hakkında sorularınızı yanıtlar.", size=12, color=C['gray']),
+        ], spacing=4)
+
+        # Generate Chat List Widgets
+        update_chat_list(skip_update=True)
+
+        # Scrollable Content Area
+        scroll_content = ft.Column([
+            video_card,
+            ft.Container(height=12),
+            toggle_regen_row,
+            ft.Container(height=16),
+            summary_card,
+            ft.Container(height=24),
+            chat_header,
+            ft.Container(height=10),
+            chat_list_column,
+            ft.Container(height=120), # Spacer at the bottom so chat input doesn't block content
+        ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=14)
+
+        # Fixed bottom chat input
+        bottom_chat_bar = ft.Container(
+            bgcolor=C['bg2'],
+            border=ft.Border.only(top=ft.border.BorderSide(1, C['border'])),
+            padding=ft.Padding.symmetric(horizontal=20, vertical=12),
+            content=ft.Row([
+                chat_input,
+                ft.IconButton(
+                    icon=ft.Icons.SEND,
+                    icon_color="#0F0C29",
+                    bgcolor="#BB86FC",
+                    icon_size=20,
+                    width=46,
+                    height=46,
+                    on_click=lambda _: send_chat_message(),
+                )
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+        )
+
+        return ft.Column([
+            app_bar,
+            ft.Container(height=12),
+            ft.Container(content=scroll_content, expand=True),
+            bottom_chat_bar
+        ], expand=True)
+
+    # ─── UI Refresh Helper ───
+    def refresh_ui():
+        # Set gradients on the main wrapping container
+        main_container.gradient = ft.LinearGradient(
+            begin=ft.Alignment.TOP_LEFT,
+            end=ft.Alignment.BOTTOM_RIGHT,
+            colors=["#0F0C29", "#302B63", "#1A0533"],
+            stops=[0.0, 0.5, 1.0]
+        )
+        main_container.padding = 24 if state.current_view == 'home' else ft.Padding.only(left=24, right=24, top=24, bottom=0)
+        
+        if state.current_view == 'home':
+            main_container.content = build_home_view()
+        else:
+            main_container.content = build_result_view()
+        page.update()
+
+    # Initial Render
+    main_container.content = build_home_view()
+    page.add(main_container)
+    refresh_ui()
+
 if __name__ == '__main__':
-    MainApp().run()
+    ft.run(main)
