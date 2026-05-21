@@ -1,11 +1,6 @@
 {
-  "name": "VideoÖzet",
-  "description": "YouTube videolarını analiz ederek özetler çıkaran ve anahtar kelime araması yapan akıllı asistan.",
-  "requestFramePermissions": [
-    "clipboard-read",
-    "clipboard-write"
-  ],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "name": "YouTube Analizör",
+  "description": "YouTube videolarını analiz eden, detaylı özet çıkaran, altyazı kelime araması ve gelişmiş soru-cevap asistanlığı sunan Türkçe yapay zeka destekli mobil uygulama.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
