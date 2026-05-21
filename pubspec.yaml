@@ -33,6 +33,4 @@ flutter:
   assets:
     - assets/splash_logo.png # SPLASH
     - assets/www/ # STATIC
-    - assets/www/src/ # STATIC
-    - assets/www/src/lib/ # STATIC
     # END ASSETS
