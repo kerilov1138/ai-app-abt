@@ -33,4 +33,35 @@ flutter:
   assets:
     - assets/splash_logo.png # SPLASH
     - assets/www/ # STATIC
+    - assets/www/app/
+    - assets/www/assets/
+    - assets/www/gradle/
+    - assets/www/app/src/
+    - assets/www/app/src/androidTest/
+    - assets/www/app/src/main/
+    - assets/www/app/src/test/
+    - assets/www/app/src/androidTest/java/
+    - assets/www/app/src/androidTest/java/com/
+    - assets/www/app/src/androidTest/java/com/example/
+    - assets/www/app/src/main/java/
+    - assets/www/app/src/main/res/
+    - assets/www/app/src/main/java/com/
+    - assets/www/app/src/main/java/com/example/
+    - assets/www/app/src/main/java/com/example/stream/
+    - assets/www/app/src/main/java/com/example/ui/
+    - assets/www/app/src/main/java/com/example/ui/theme/
+    - assets/www/app/src/main/res/drawable/
+    - assets/www/app/src/main/res/mipmap-anydpi-v26/
+    - assets/www/app/src/main/res/mipmap-hdpi/
+    - assets/www/app/src/main/res/mipmap-mdpi/
+    - assets/www/app/src/main/res/mipmap-xhdpi/
+    - assets/www/app/src/main/res/mipmap-xxhdpi/
+    - assets/www/app/src/main/res/mipmap-xxxhdpi/
+    - assets/www/app/src/main/res/values/
+    - assets/www/app/src/main/res/xml/
+    - assets/www/app/src/test/java/
+    - assets/www/app/src/test/screenshots/
+    - assets/www/app/src/test/java/com/
+    - assets/www/app/src/test/java/com/example/
+    - assets/www/assets/.aistudio/
     # END ASSETS

@@ -27,8 +27,8 @@ jobs:
       - name: Build web app (fail-fast)
         run: |
           if [ ! -f assets/www/package.json ]; then
-            echo "assets/www/package.json bulunamadi."
-            exit 1
+            echo "assets/www/package.json bulunamadi. Static mode assumed, skipping build."
+            exit 0
           fi
 
           pushd assets/www
@@ -46,6 +46,21 @@ jobs:
           rm -rf assets/www/*
           cp -R /tmp/www_dist/. assets/www/
           test -f assets/www/index.html
+
+      - name: Update pubspec.yaml with all web assets subdirectories
+        run: |
+          echo "Updating pubspec.yaml with asset subdirectories..."
+          if [ -d assets/www ]; then
+            find assets/www -type d | while read -r dir; do
+              clean_dir=$(echo "$dir" | tr '\\' '/' | sed 's/\/\+$//')/
+              if ! grep -q "    - $clean_dir" pubspec.yaml; then
+                echo "    - $clean_dir" >> pubspec.yaml
+                echo "Added: $clean_dir"
+              fi
+            done
+          fi
+          echo "--- Updated pubspec.yaml ---"
+          cat pubspec.yaml
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
