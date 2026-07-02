@@ -1,6 +1,6 @@
 {
-  "name": "Bebek Telsizi ve Ağlama Alarmı",
-  "description": "Aynı Wi-Fi ağına bağlı cihazlar arasında gerçek zamanlı ses iletimi ve bebek ağlaması tespiti sağlayan akıllı izleme aracı.",
-  "requestFramePermissions": ["microphone"],
+  "name": "P2P Gözcü",
+  "description": "Eski Android telefonunuzu düşük gecikmeli P2P kamera ve ses yayınına dönüştürün. Sunucu gerektirmeden doğrudan QR kod ile çalışır.",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
