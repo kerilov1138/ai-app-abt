@@ -1,19 +1,18 @@
-export interface Question {
-  id?: string;
-  word: string;
-  definition: string;
-  length: number;
+export type DeviceRole = "bebek" | "ebeveyn";
+
+export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
+export interface LogEntry {
+  id: string;
+  time: string;
+  type: "info" | "warning" | "alert" | "error";
+  message: string;
 }
 
-export interface GameState {
-  currentQuestionIndex: number;
-  score: number;
-  timeLeft: number;
-  revealedLetters: number[];
-  isTimerRunning: boolean;
-  isGameOver: boolean;
-  isAnswering: boolean;
-  isAnswerTimerRunning: boolean;
-  answerTimeLeft: number;
-  totalScore: number;
+export interface BabyState {
+  volume: number; // Current sound level (0 to 100)
+  battery?: number; // Device battery percentage (optional)
+  isCrying: boolean; // Is currently crying
+  lastCryTime?: string; // Timestamp of last detected cry
+  online: boolean; // Is the baby unit currently active/online
 }

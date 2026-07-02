@@ -1,354 +1,172 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
+import http from "http";
 import path from "path";
-import { YoutubeTranscript } from 'youtube-transcript';
-import ytdl from '@distube/ytdl-core';
+import { WebSocketServer, WebSocket } from "ws";
+import { createServer as createViteServer } from "vite";
+
+interface ClientConnection {
+  ws: WebSocket;
+  room: string;
+  role: "bebek" | "ebeveyn" | null;
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  // Create an HTTP server to share with Express and WebSockets
+  const server = http.createServer(app);
 
-  // API Route to fetch YouTube Transcript
-  app.get("/api/transcript", async (req, res) => {
-    const videoUrl = req.query.url as string;
-    if (!videoUrl) {
-      return res.status(400).json({ error: "URL parametresi gerekli." });
-    }
+  // Initialize WebSocket Server on the same server instance
+  const wss = new WebSocketServer({ noServer: true });
 
-    try {
-      const videoIdMatch = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
-      const videoId = videoIdMatch ? videoIdMatch[1] : (videoUrl.length === 11 ? videoUrl : null);
+  // Store active client connections
+  const clients = new Map<WebSocket, ClientConnection>();
 
-      if (!videoId) {
-         return res.status(400).json({ error: "Geçersiz YouTube URL formatı. Lütfen videonun tam linkini yapıştırın." });
-      }
+  wss.on("connection", (ws) => {
+    // Initial mapping
+    clients.set(ws, { ws, room: "", role: null });
 
-      console.log(`Video Analiz Başlatıldı: ${videoId}`);
-      
-      let transcript;
-      let audioFallback = false;
-
+    ws.on("message", (message) => {
       try {
-        transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'tr' });
-      } catch (trError) {
-        try {
-          transcript = await YoutubeTranscript.fetchTranscript(videoId);
-        } catch (anyError: any) {
-          const errorName = anyError.name || "";
-          const msg = anyError.message || "";
-          
-          if (errorName === 'YoutubeTranscriptDisabledError' || msg.includes('disabled') || msg.includes('not available')) {
-            console.log(`Uyarı: Altyazılar devre dışı (${videoId}), sesli analiz denenecek.`);
-            return res.json({ videoId, transcript: [], audioFallback: true });
-          }
-          
-          if (msg.includes('Too many requests') || msg.includes('429')) {
-            return res.status(429).json({
-              error: "YouTube erişimi geçici olarak kısıtladı.",
-              suggestion: "Birkaç dakika sonra tekrar deneyin."
+        const data = JSON.parse(message.toString());
+        const client = clients.get(ws);
+        if (!client) return;
+
+        switch (data.type) {
+          case "join": {
+            const { room, role } = data;
+            if (!room || !role) return;
+
+            // Clean up existing room stats if rejoining
+            client.room = room;
+            client.role = role;
+
+            console.log(`[WS] Cihaz katıldı: Oda = ${room}, Rol = ${role}`);
+
+            // Notify everyone in the room about the new participant
+            broadcastToRoom(room, ws, {
+              type: "partner-status",
+              event: "connected",
+              role: role,
             });
-          }
-          throw anyError;
-        }
-      }
-      
-      res.json({ 
-        videoId,
-        transcript: transcript.map((t: any) => ({
-          text: t.text,
-          start: t.offset / 1000,
-          duration: t.duration / 1000
-        })),
-        audioFallback: false
-      });
-    } catch (error) {
-      console.error("General API Error:", error);
-      res.status(500).json({ 
-        error: "Beklenmedik bir hata oluştu veya altyazı verisi alınamadı.",
-        details: error instanceof Error ? error.message : "Bilinmeyen hata"
-      });
-    }
-  });
 
-  // API Route for Gemini Summarization
-  app.post("/api/summarize", async (req, res) => {
-    const { transcript, videoId, audioFallback, deepAnalysis } = req.body;
-    const userApiKey = req.headers['x-gemini-key'] as string;
-
-    try {
-      const { GoogleGenAI } = await import("@google/genai");
-      const apiKey = userApiKey || process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(200).json({ error: "Gemini API anahtarı bulunamadı. Lütfen ayarlardan anahtarınızı girin." });
-      }
-
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          }
-        }
-      });
-
-      let prompt = "";
-      let contents: any[] = [];
-
-      // Use audio if fallback is active OR if user requested deep analysis
-      if ((audioFallback || deepAnalysis) && videoId) {
-        console.log(`Deep Audio Analysis Başlatıldı: ${videoId}`);
-        
-        // Advanced bypass headers (Mobile Android approach)
-        const bypassHeaders = {
-          'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 11; en_US; Pixel 4 XL Build/RQ3A.210705.001)',
-          'X-YouTube-Client-Name': '3',
-          'X-YouTube-Client-Version': '19.29.37',
-          'Origin': 'https://www.youtube.com',
-          'Referer': `https://www.youtube.com/watch?v=${videoId}`,
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-        };
-
-        // Support for custom cookies if provided in environment
-        const cookie = process.env.YOUTUBE_COOKIE;
-        if (cookie) {
-          (bypassHeaders as any)['Cookie'] = cookie;
-        }
-
-        // Download audio
-        const audioStream = ytdl(videoId, { 
-          filter: 'audioonly', 
-          quality: 'lowestaudio',
-          requestOptions: {
-            headers: bypassHeaders
-          }
-        });
-        const chunks: Buffer[] = [];
-        
-        let totalSize = 0;
-        const MAX_SIZE = 15 * 1024 * 1024; // 15MB safe limit for inlineData
-
-        try {
-          for await (const chunk of audioStream) {
-            totalSize += chunk.length;
-            if (totalSize < MAX_SIZE) {
-              chunks.push(chunk);
-            } else {
-              console.log("Audio size limit reached, using partial audio.");
-              break;
+            // If an ebeveyn joined, notify them if a bebek is already present in this room
+            if (role === "ebeveyn") {
+              const bebekExists = Array.from(clients.values()).some(
+                (c) => c.room === room && c.role === "bebek" && c.ws !== ws
+              );
+              ws.send(
+                JSON.stringify({
+                  type: "partner-status",
+                  event: bebekExists ? "connected" : "disconnected",
+                  role: "bebek",
+                })
+              );
+            } else if (role === "bebek") {
+              // If a bebek joined, notify them if an ebeveyn is already present
+              const ebeveynExists = Array.from(clients.values()).some(
+                (c) => c.room === room && c.role === "ebeveyn" && c.ws !== ws
+              );
+              ws.send(
+                JSON.stringify({
+                  type: "partner-status",
+                  event: ebeveynExists ? "connected" : "disconnected",
+                  role: "ebeveyn",
+                })
+              );
             }
+            break;
           }
-        } catch (streamError: any) {
-             console.error("Stream Error (Audio):", streamError);
-             const isBot = streamError.message?.includes('Sign in') || streamError.message?.includes('bot');
-             if (isBot) {
-               return res.status(200).json({ 
-                 error: "YouTube bot koruması tespit edildi.", 
-                 suggestion: "Bu video maalesef sesli olarak analiz edilemiyor (YouTube kısıtlaması). Engelden kurtulmak için: 1. Altyazısı olan bir video deneyin. 2. Ayarlar kısmından 'YOUTUBE_COOKIE' değişkenini tanımlayın (En kesin çözüm)." 
-               });
-             }
-             throw streamError;
+
+          case "audio-chunk": {
+            // Relay audio chunk to all ebeveyn units in the same room
+            if (client.room && client.role === "bebek") {
+              broadcastToRoom(client.room, ws, {
+                type: "audio-chunk",
+                audio: data.audio, // Base64 or array
+              });
+            }
+            break;
+          }
+
+          case "cry-detected": {
+            // Relay cry alert to ebeveyn units
+            if (client.room && client.role === "bebek") {
+              broadcastToRoom(client.room, ws, {
+                type: "cry-detected",
+                level: data.level,
+                duration: data.duration,
+              });
+            }
+            break;
+          }
+
+          case "status-update": {
+            // Relay volume/battery level updates to ebeveyn units
+            if (client.room && client.role === "bebek") {
+              broadcastToRoom(client.room, ws, {
+                type: "status-update",
+                volume: data.volume,
+                battery: data.battery,
+              });
+            }
+            break;
+          }
+
+          case "ping": {
+            ws.send(JSON.stringify({ type: "pong" }));
+            break;
+          }
+
+          default:
+            break;
         }
-        
-        const audioBuffer = Buffer.concat(chunks);
-        const base64Audio = audioBuffer.toString('base64');
-
-        prompt = `
-          Lütfen bu videonun sesini (audio) derinlemesine analiz et. Konuşmacıların tonlamalarını, arka plan seslerini ve anlatılan her detayı "dinleyerek" şu çıktıları oluştur:
-          1. "shortSummary": En fazla 2-3 cümleden oluşan ana fikir özeti.
-          2. "longSummary": Önemli noktaları, detayları ve videodaki duygu durumunu/tonu içeren kapsamlı özet.
-          
-          Çıktıyı sadece JSON formatında ver:
-          {
-            "shortSummary": "...",
-            "longSummary": "..."
-          }
-        `;
-
-        contents = [
-          {
-            role: "user",
-            parts: [
-              { text: prompt },
-              { inlineData: { mimeType: "audio/mp4", data: base64Audio } }
-            ]
-          }
-        ];
-      } else {
-        if (!transcript) {
-          return res.status(200).json({ error: "Transkript veya Video ID gerekli." });
-        }
-
-        prompt = `
-          Aşağıdaki YouTube videosu transkript metnini saniyeler içinde analiz et ve Türkçe olarak iki farklı özet oluştur:
-          1. "shortSummary": En fazla 2-3 cümleden oluşan, ana fikri veren çok kısa özet.
-          2. "longSummary": Videodaki ana noktaları, önemli detayları ve sonuçları içeren kapsamlı özet.
-          
-          Çıktıyı sadece JSON formatında ver:
-          {
-            "shortSummary": "...",
-            "longSummary": "..."
-          }
-
-          Transkript Metni:
-          ${transcript.slice(0, 30000)}
-        `;
-
-        contents = [{ role: "user", parts: [{ text: prompt }] }];
+      } catch (err) {
+        console.error("WebSocket message parsing error:", err);
       }
+    });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents,
-        config: {
-          systemInstruction: "Sen bir YouTube Video Analiz Asistanısın. Gelen ses veya metin verisini derinlemesine analiz ederek, altyazı bağımlılığı olmadan en doğru bilgiyi sunmalısın.",
-          responseMimeType: "application/json",
+    ws.on("close", () => {
+      const client = clients.get(ws);
+      if (client) {
+        console.log(`[WS] Cihaz ayrıldı: Oda = ${client.room}, Rol = ${client.role}`);
+        if (client.room && client.role) {
+          // Notify the other side that this client went offline
+          broadcastToRoom(client.room, ws, {
+            type: "partner-status",
+            event: "disconnected",
+            role: client.role,
+          });
         }
-      });
-
-      const resultText = response.text;
-      const parsed = JSON.parse(resultText || "{}");
-      res.json(parsed);
-    } catch (error: any) {
-      console.error("Summarization Error:", error);
-      const errorMsg = error.message || "";
-      const isBotBlock = errorMsg.includes('Sign in') || 
-                        errorMsg.includes('bot') || 
-                        errorMsg.includes('status code: 403') ||
-                        error.name === 'UnrecoverableError';
-
-      if (isBotBlock) {
-        return res.status(200).json({ 
-          error: "YouTube bot koruması tespit edildi.", 
-          suggestion: "Bu video maalesef sesli olarak analiz edilemiyor (YouTube kısıtlaması). Lütfen altyazısı (CC) olan başka bir video deneyin." 
-        });
+        clients.delete(ws);
       }
-      res.status(200).json({ error: "Video analiz edilirken bir hata oluştu: " + errorMsg });
-    }
+    });
   });
 
-  // API Route for Interactive Chat about the video
-  app.post("/api/chat", async (req, res) => {
-    const { message, history, transcript, videoId, audioFallback } = req.body;
-    const userApiKey = req.headers['x-gemini-key'] as string;
-    
-    if (!message) {
-      return res.status(200).json({ error: "Mesaj gerekli." });
+  // Helper function to broadcast message to all other clients in the same room
+  function broadcastToRoom(room: string, senderWs: WebSocket, payload: any) {
+    const rawMessage = JSON.stringify(payload);
+    for (const [ws, conn] of clients.entries()) {
+      if (conn.room === room && ws !== senderWs && ws.readyState === WebSocket.OPEN) {
+        ws.send(rawMessage);
+      }
     }
+  }
 
-    try {
-      const { GoogleGenAI } = await import("@google/genai");
-      const apiKey = userApiKey || process.env.GEMINI_API_KEY;
-      if (!apiKey) return res.status(200).json({ error: "Gemini API anahtarı bulunamadı. Lütfen ayarlardan anahtarınızı girin." });
-
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
-
-      let contents: any[] = [];
-      
-      // Prepare history
-      if (history && Array.isArray(history)) {
-        contents = history.map((h: any) => ({
-          role: h.role === 'user' ? 'user' : 'model',
-          parts: [{ text: h.text }]
-        }));
-      }
-
-      if (audioFallback && videoId) {
-        // Chat using audio fallback
-        const bypassHeaders = {
-          'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 11; en_US; Pixel 4 XL Build/RQ3A.210705.001)',
-          'X-YouTube-Client-Name': '3',
-          'X-YouTube-Client-Version': '19.29.37',
-          'Origin': 'https://www.youtube.com',
-          'Referer': `https://www.youtube.com/watch?v=${videoId}`,
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-        };
-
-        const cookie = process.env.YOUTUBE_COOKIE;
-        if (cookie) (bypassHeaders as any)['Cookie'] = cookie;
-
-        const audioStream = ytdl(videoId, { 
-          filter: 'audioonly', 
-          quality: 'lowestaudio',
-          requestOptions: {
-            headers: bypassHeaders
-          }
-        });
-        const chunks: Buffer[] = [];
-        let totalSize = 0;
-        const MAX_SIZE = 15 * 1024 * 1024;
-
-        try {
-          for await (const chunk of audioStream) {
-            totalSize += chunk.length;
-            if (totalSize < MAX_SIZE) chunks.push(chunk);
-            else break;
-          }
-        } catch (streamError: any) {
-             console.error("Chat Stream Error (Audio):", streamError);
-             const isBot = streamError.message?.includes('Sign in') || streamError.message?.includes('bot');
-             if (isBot) {
-               return res.status(200).json({ 
-                 error: "YouTube bot koruması tespit edildi.", 
-                 suggestion: "Bu video şu anda sesli olarak analiz edilemiyor. Altyazısı olan bir video deneyebilir veya 'YOUTUBE_COOKIE' ayarını yapılandırabilirsiniz." 
-               });
-             }
-             throw streamError;
-        }
-        
-        const base64Audio = Buffer.concat(chunks).toString('base64');
-        
-        contents.push({
-          role: "user",
-          parts: [
-            { text: `Video ses dosyası ektedir. Lütfen bu videoya göre şu soruyu cevapla: ${message}` },
-            { inlineData: { mimeType: "audio/mp4", data: base64Audio } }
-          ]
-        });
-      } else {
-        // Chat using text transcript
-        const context = `Videonun transkripti: ${transcript?.slice(0, 30000) || "Transkript yok."}`;
-        contents.push({
-          role: "user",
-          parts: [{ text: `${context}\n\nKullanıcı Sorusu: ${message}` }]
-        });
-      }
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents,
-        config: {
-          systemInstruction: "Sen bir YouTube Video Analiz Asistanısın. Sadece sana verilen transkript veya ses kaydı içeriğine dayanarak kısa ve etkili cevaplar vermeli, video dışına çıkmamalısın.",
-        }
-      });
-
-      res.json({ text: response.text });
-    } catch (error: any) {
-      console.error("Chat Error:", error);
-      const errorMsg = error.message || "";
-      const isBotBlock = errorMsg.includes('Sign in') || 
-                        errorMsg.includes('bot') || 
-                        errorMsg.includes('status code: 403') ||
-                        error.name === 'UnrecoverableError';
-
-      if (isBotBlock) {
-        return res.status(200).json({ 
-          error: "YouTube bot koruması tespit edildi.", 
-          suggestion: "Bu video şu anda sesli olarak analiz edilemiyor. Lütfen altyazısı olan bir video deneyin." 
-        });
-      }
-      res.status(200).json({ error: "Soru cevaplanırken bir hata oluştu: " + errorMsg });
-    }
+  // Handle WebSocket HTTP upgrades
+  server.on("upgrade", (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
   });
 
-  // Vite middleware for development
+  // Health API route
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", activeRooms: Array.from(new Set(Array.from(clients.values()).map(c => c.room).filter(Boolean))) });
+  });
+
+  // Setup Vite Dev server middleware or static serving
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -356,16 +174,19 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  // Bind to port 3000 as required
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`[BABY-MONITOR] Server is running on http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Failed to start baby monitor server:", error);
+});

@@ -1,6 +1,6 @@
 {
-  "name": "YouTube Analizör",
-  "description": "YouTube videolarını analiz eden, detaylı özet çıkaran, altyazı kelime araması ve gelişmiş soru-cevap asistanlığı sunan Türkçe yapay zeka destekli mobil uygulama.",
-  "requestFramePermissions": [],
+  "name": "Bebek Telsizi ve Ağlama Alarmı",
+  "description": "Aynı Wi-Fi ağına bağlı cihazlar arasında gerçek zamanlı ses iletimi ve bebek ağlaması tespiti sağlayan akıllı izleme aracı.",
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

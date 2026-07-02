@@ -60,7 +60,7 @@ jobs:
         run: |
           if [ ! -f android/app/build.gradle ] && [ ! -f android/app/build.gradle.kts ]; then
             echo "Android scaffold eksik, flutter create ile olusturuluyor..."
-            flutter create . --platforms=android --org com.youtube_analizi
+            flutter create . --platforms=android --org com.bebekcam
           fi
 
       - name: Flutter embedding health check (v1 guard)
