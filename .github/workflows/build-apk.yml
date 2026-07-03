@@ -51,7 +51,7 @@ jobs:
 
       - name: Build APK using Flet
         run: |
-          flet build apk --project "youtube_analiz" --org "com.example" --product "Youtube Analiz" --output build/apk --verbose -y
+          echo "y" | flet build apk --project "youtube_analiz" --org "com.example" --product "Youtube Analiz" --output build/apk --verbose
 
       - name: Verify APK Generation
         run: |
