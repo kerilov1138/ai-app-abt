@@ -72,8 +72,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: release-${ steps.date.outputs.date }
-          name: APK Release - ${ steps.date.outputs.date }
+          tag_name: v${{ github.run_number }}
+          name: APK Release v${{ github.run_number }}
           draft: false
           prerelease: false
           files: build/apk/*.apk
@@ -83,10 +83,10 @@ jobs:
             **Detaylar:**
             - **Uygulama Adı:** Youtube Analiz
             - **Paket Kimliği:** com.example.youtube_analiz
-            - **Derleme Zamanı:** ${ steps.date.outputs.date }
+            - **Derleme Zamanı:** ${{ steps.date.outputs.date }}
             - **Java Sürümü:** 21 (Zulu LTS)
             - **Platform:** Android (APK)
             
             Aşağıdaki bağlantıdan APK dosyasını indirip Android cihazınıza kurabilirsiniz.
         env:
-          GITHUB_TOKEN: ${ secrets.GITHUB_TOKEN }
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
