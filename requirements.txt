@@ -1,6 +1,4 @@
 flet
-flet
 youtube_transcript_api
-tkinter
 requests
 google
