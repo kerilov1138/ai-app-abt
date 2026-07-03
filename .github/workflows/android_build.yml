@@ -119,12 +119,23 @@ jobs:
           name: app-release
           path: build/app/outputs/flutter-apk/app-release.apk
 
+      - name: Generate clean tag name
+        id: tag_gen
+        run: |
+          REF_NAME="${{ github.ref_name }}"
+          CLEAN_TAG=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9.-]/_/g' | sed 's/^[.-]*//' | sed 's/[.-]*$//')
+          if [ -z "$CLEAN_TAG" ] || [ "$CLEAN_TAG" = "main" ] || [ "$CLEAN_TAG" = "master" ]; then
+            CLEAN_TAG="v1.0.${{ github.run_number }}"
+          elif [[ ! "$CLEAN_TAG" =~ ^v ]]; then
+            CLEAN_TAG="v$CLEAN_TAG"
+          fi
+          echo "tag=$CLEAN_TAG" >> "$GITHUB_OUTPUT"
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: App Release ${{ github.ref_name }}
+          tag_name: ${{ steps.tag_gen.outputs.tag }}
+          name: App Release ${{ steps.tag_gen.outputs.tag }}
           draft: false
           prerelease: false
           files: build/app/outputs/flutter-apk/app-release.apk
