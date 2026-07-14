@@ -1,39 +1,72 @@
 # -*- coding: utf-8 -*-
+# P2P-GOZLEM Projesi icin Android APK Derleme ve Hazirlik Yardimci Betigi
+
 import os
 import sys
 import subprocess
+import platform
 
-def sistem_kontrol_et():
-    print("[BILGI] Java Surumu Kontrol Ediliyor...")
+def check_environment():
+    """Java JDK ve Gradle Wrapper dosyalarinin varligini kontrol eder."""
+    print("[YARDIMCI] Ortam kontrolleri yapiliyor...")
+    
+    # Java kontrolu
     try:
-        java_surum = subprocess.run(["java", "-version"], capture_output=True, text=True)
-        print(java_surum.stderr)
+        java_check = subprocess.run(["java", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if java_check.returncode == 0:
+            print("[OK] Java JDK basariyla tespit edildi.")
+        else:
+            print("[HATA] Java tespit edildi ancak duzgun calismiyor.")
+            return False
     except FileNotFoundError:
-        print("[HATA] Java bulunamadi. Android derleme islemi icin JDK kurulmalidir.")
-        sys.exit(1)
+        print("[HATA] 'java' komutu sistemde bulunamadi. Lutfen Java JDK 17 yukleyin.")
+        return False
+        
+    # Gradle wrapper kontrolu
+    gradle_exec = "gradlew.bat" if platform.system() == "Windows" else "./gradlew"
+    if os.path.exists("gradlew") or os.path.exists("gradlew.bat"):
+        print(f"[OK] Gradle Wrapper ({gradle_exec}) projenin ana dizininde bulundu.")
+        if platform.system() != "Windows":
+            print("[BILGI] Linux/macOS icin Gradle wrapper'a yurutme izni veriliyor...")
+            os.chmod("gradlew", 0o755)
+    else:
+        print("[HATA] Proje ana dizininde 'gradlew' bulunamadi. Lutfen dogru dizinde oldugunuzdan emin olun.")
+        return False
 
-def gradle_calistir():
-    print("[BILGI] Gradle build baslatiliyor...")
-    is_windows = os.name == 'nt'
-    gradle_cmd = "gradlew.bat" if is_windows else "./gradlew"
-    
-    if not is_windows:
-        # Linux/macOS icin izin ayarla
-        subprocess.run(["chmod", "+x", "gradlew"])
+    return True
+
+def run_build():
+    """Gradlew kullanarak Debug APK'sini derler."""
+    print("[YARDIMCI] Gradle derleme sureci baslatiliyor...")
+    cmd = "gradlew.bat" if platform.system() == "Windows" else "./gradlew"
     
     try:
-        # Debug APK derleme komutunu calistir
-        sonuc = subprocess.run([gradle_cmd, "assembleDebug"], check=True)
-        if sonuc.returncode == 0:
-            print("[BASARILI] APK basariyla derlendi.")
-            apk_yolu = os.path.join("app", "build", "outputs", "apk", "debug", "app-debug.apk")
-            if os.path.exists(apk_yolu):
-                print(f"[BILGI] APK Konumu: {os.path.abspath(apk_yolu)}")
-    except subprocess.CalledProcessError as e:
-        print(f"[HATA] Gradle derleme hatasi olustu: {e}")
+        process = subprocess.Popen([cmd, "assembleDebug"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        
+        # Loglari anlik yazdir
+        for line in process.stdout:
+            print(line, end="")
+            
+        process.wait()
+        
+        if process.returncode == 0:
+            print("\n[BASARILI] Derleme basariyla tamamlandi!")
+            apk_path = os.path.join("app", "build", "outputs", "apk", "debug", "app-debug.apk")
+            if os.path.exists(apk_path):
+                print(f"[OK] Derlenen APK Yolu: {os.path.abspath(apk_path)}")
+            else:
+                print("[UYARI] Derleme basarili, fakat 'app-debug.apk' hedeflenen dizinde bulunamadi.")
+        else:
+            print(f"\n[HATA] Derleme hatasi! Cikis kodu: {process.returncode}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"[HATA] Derleme sirasinda bir istisna olustu: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    print("=== Android Projesi Derleme Yardimcisi ===")
-    sistem_kontrol_et()
-    gradle_calistir()
+    if check_environment():
+        run_build()
+    else:
+        print("[HATA] Kurulum gereksinimleri karsilanmadigi icin derleme baslatilamadi.")
+        sys.exit(1)
