@@ -1,34 +1,66 @@
 # -*- coding: utf-8 -*-
 import os
-import sys
 import subprocess
+import sys
+import shutil
 
-def check_project():
-    print("=== P2P-GOZLEM Android Projesi Yapilandirma Yardimcisi ===")
-    print("Bu betik yerel ortamda projenizi derlemeye hazirlamak icin kontroller yapar.\n")
+def run_command(command):
+    print(f"Calistiriliyor: {command}")
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    while True:
+        output = process.stdout.readline()
+        if output == b'' and process.poll() is not None:
+            break
+        if output:
+            print(output.decode('utf-8', errors='ignore').strip())
+    rc = process.poll()
+    return rc
+
+def main():
+    print("=== Android Kotlin Projesi Local Derleme Yardimcisi ===")
     
-    # Gradle calisabilirlik kontrolu
-    gradlew_file = "gradlew" if sys.platform != "win32" else "gradlew.bat"
-    if os.path.exists(gradlew_file):
-        print(f"[OK] '{gradlew_file}' yerel betigi basariyla tespit edildi.")
-    else:
-        print("[HATA] Proje kok dizininde 'gradlew' dosyasi bulunamadi! Proje yapisini kontrol edin.")
+    # 1. JDK Kontrolu
+    try:
+        java_version = subprocess.check_output("java -version", shell=True, stderr=subprocess.STDOUT).decode('utf-8')
+        print(f"Java Tespit Edildi:\n{java_version}")
+    except Exception:
+        print("HATA: Sisteminizde Java JDK bulunamadi. Lutfen Java JDK 17 yukleyip tekrar deneyin.")
+        sys.exit(1)
 
-    # Android Manifest kontrolu
-    manifest_path = os.path.join("app", "src", "main", "AndroidManifest.xml")
-    if os.path.exists(manifest_path):
-        print(f"[OK] AndroidManifest.xml bulundu: {manifest_path}")
-    else:
-        print("[UYARI] AndroidManifest.xml dosyasi standart yolda bulunamadi!")
+    # 2. Gradle Izni ve Kontrolu
+    if not os.path.exists("gradlew") and not os.path.exists("gradlew.bat"):
+        print("Gradle Wrapper bulunamadi, yerel ortamda olusturuluyor...")
+        run_command("gradle wrapper")
 
-    # Yerel Derleme Talimati
-    print("\n[YEREL DERLEME TALIMATI]")
-    if sys.platform == "win32":
-        print("Windows uzerinde derlemek icin komut satirinda sunu calistirin:")
-        print("    .\\gradlew.bat assembleDebug")
+    if os.name != 'nt':
+        run_command("chmod +x gradlew")
+
+    # 3. Derleme Islemine Basla
+    print("Hizli derleme baslatiliyor...")
+    gradle_cmd = "./gradlew assembleDebug" if os.name != 'nt' else "gradlew.bat assembleDebug"
+    result = run_command(gradle_cmd)
+
+    if result == 0:
+        print("\nDerleme Basariyla Tamamlandi!")
+        # APK bul ve kopyala
+        found_apk = None
+        for root, dirs, files in os.walk("."):
+            for file in files:
+                if file.endswith(".apk"):
+                    found_apk = os.path.join(root, file)
+                    break
+            if found_apk: 
+                break
+        
+        if found_apk:
+            target_name = "./KIVVAANC.apk"
+            shutil.copy2(found_apk, target_name)
+            print(f"APK basariyla yeniden adlandirildi ve suraya kopyalandi: {os.path.abspath(target_name)}")
+        else:
+            print("HATA: Derlenmis bir APK bulunamadi!")
     else:
-        print("macOS/Linux uzerinde derlemek icin sunu calistirin:")
-        print("    chmod +x gradlew && ./gradlew assembleDebug")
+        print("HATA: Derleme sirasinda hata olustu.")
+        sys.exit(1)
 
 if __name__ == '__main__':
-    check_project()
+    main()

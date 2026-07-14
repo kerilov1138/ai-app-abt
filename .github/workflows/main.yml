@@ -1,29 +1,65 @@
+name: Build Android APK
 
-name: Android APK Derleyici
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request: 
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Java 17 Kurulumu
+      - name: Depoyu Klonla (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Java JDK 17 Kurulumu
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
-      - name: Gradle Kurulumu
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: 8.1.1
-          cache-disabled: true
-      - name: Gradle Wrapper Oluştur
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Gradle Calistirilabilirlik Izinleri
         run: |
-          gradle wrapper --gradle-version 8.1.1
-          chmod +x gradlew
-      - name: Android APK Derle
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-      - name: APK Dosyasını Yayınla
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          elif [ -f app/gradlew ]; then
+            chmod +x app/gradlew
+          else
+            echo "Gradle wrapper bulunamadi, olusturuluyor..."
+            gradle wrapper
+            chmod +x gradlew
+          fi
+
+      - name: APK Derleme (Debug)
+        run: |
+          if [ -f gradlew ]; then
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
+
+      - name: APK Dosyasini Bul ve KIVVAANC Olarak Yeniden Adlandir
+        run: |
+          echo "Derlenen tum APK dosyalari araniyor..."
+          find . -name "*.apk" -type f
+          APK_PATH=$(find app/build/outputs/apk/ -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          fi
+          if [ -n "$APK_PATH" ]; then
+            mv "$APK_PATH" ./KIVVAANC.apk
+            echo "APK basariyla ./KIVVAANC.apk konumuna tasindi."
+          else
+            echo "HATA: APK dosyasi bulunamadi!"
+            exit 1
+          fi
+
+      - name: KIVVAANC APK Dosyasini Yukle (Artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Gemini-Uygulama-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: KIVVAANC
+          path: ./KIVVAANC.apk
