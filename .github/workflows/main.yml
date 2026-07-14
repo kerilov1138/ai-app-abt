@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Android APK Build - kivo
 
 on:
   push:
@@ -12,54 +12,55 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Depoyu Klonla (Checkout)
+      - name: Repoyu Klonla
         uses: actions/checkout@v4
 
-      - name: Java JDK 17 Kurulumu
+      - name: JDK 17 Kurulumu
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
-      - name: Gradle Calistirilabilirlik Izinleri
+      - name: Gradle Kurulumu
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Gradle Wrapper Yetkilendir
         run: |
           if [ -f gradlew ]; then
             chmod +x gradlew
-          elif [ -f app/gradlew ]; then
-            chmod +x app/gradlew
           else
-            echo "Gradle wrapper bulunamadi, olusturuluyor..."
+            echo "gradlew bulunamadı, Gradle Wrapper oluşturuluyor..."
             gradle wrapper
             chmod +x gradlew
           fi
 
-      - name: APK Derleme (Debug)
-        run: |
-          if [ -f gradlew ]; then
-            ./gradlew assembleDebug
-          else
-            gradle assembleDebug
-          fi
+      - name: Projeyi Derle (Assemble Debug)
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: APK Dosyasini Bul ve KIVVAANC Olarak Yeniden Adlandir
+      - name: APK Dosyasını Bul ve Yeniden Adlandır (kıvo.apk)
         run: |
-          echo "Derlenen tum APK dosyalari araniyor..."
-          find . -name "*.apk" -type f
-          APK_PATH=$(find app/build/outputs/apk/ -name "*.apk" -type f | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find . -name "*.apk" -type f | head -n 1)
+          echo "Derlenen APK aranıyor..."
+          APK_FILE=$(find app/build/outputs/apk/debug/ -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*-debug.apk" -type f | head -n 1)
           fi
-          if [ -n "$APK_PATH" ]; then
-            mv "$APK_PATH" ./KIVVAANC.apk
-            echo "APK basariyla ./KIVVAANC.apk konumuna tasindi."
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" -type f | head -n 1)
+          fi
+          
+          if [ -n "$APK_FILE" ]; then
+            echo "Bulunan APK yolu: $APK_FILE"
+            mv "$APK_FILE" ./kıvo.apk
+            echo "Başarıyla ./kıvo.apk olarak kopyalandı."
           else
-            echo "HATA: APK dosyasi bulunamadi!"
+            echo "Hata: APK dosyası bulunamadı!"
             exit 1
           fi
 
-      - name: KIVVAANC APK Dosyasini Yukle (Artifact)
+      - name: APK Dosyasını Artifact Olarak Yükle
         uses: actions/upload-artifact@v4
         with:
-          name: KIVVAANC
-          path: ./KIVVAANC.apk
+          name: kıvo
+          path: ./kıvo.apk
+          if-no-files-found: error
