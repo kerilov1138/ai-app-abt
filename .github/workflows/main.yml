@@ -1,55 +1,29 @@
-name: Android CI-CD - KIVANC APK Builder
 
-on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request: 
-    branches: [ "main", "master" ]
-  workflow_dispatch:
-
+name: Android APK Derleyici
+on: [push, workflow_dispatch]
 jobs:
   build:
-    name: Android APK Derleme Adimi
-    runs-on: ubuntu-24.04
-
+    runs-on: ubuntu-latest
     steps:
-    - name: Depoyu Klonla
-      uses: actions/checkout@v4
-
-    - name: Java JDK 17 Kurulumu
-      uses: actions/setup-java@v4
-      with: 
-        distribution: 'temurin'
-        java-version: '17'
-        cache: 'gradle'
-
-    - name: Gradle Calistirma Yetkilerini Ayarla
-      run: |
-        if [ -f gradlew ]; then
+      - uses: actions/checkout@v4
+      - name: Java 17 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Gradle Kurulumu
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.1.1
+          cache-disabled: true
+      - name: Gradle Wrapper Oluştur
+        run: |
+          gradle wrapper --gradle-version 8.1.1
           chmod +x gradlew
-        elif [ -f app/gradlew ]; then
-          chmod +x app/gradlew
-        else
-          echo "gradlew bulunamadi"
-        fi
-
-    - name: Android Debug APK Derle
-      run: ./gradlew assembleDebug
-
-    - name: APK Dosyasini Yeniden Adlandir ve Hazirla
-      run: |
-        mkdir -p build_output
-        if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-          cp app/build/outputs/apk/debug/app-debug.apk build_output/KIVANC.apk
-        elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
-          cp app/build/outputs/apk/release/app-release-unsigned.apk build_output/KIVANC.apk
-        else
-          # Genel yedek arama
-          find app/build/outputs/apk/ -name "*.apk" -exec cp {} build_output/KIVANC.apk \;
-        fi
-
-    - name: KIVANC APK Dosyasini Artifact Olarak Yukle
-      uses: actions/upload-artifact@v4
-      with:
-        name: KIVANC
-        path: build_output/KIVANC.apk
+      - name: Android APK Derle
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: APK Dosyasını Yayınla
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gemini-Uygulama-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
