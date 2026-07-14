@@ -31,7 +31,11 @@ data class NotificationSettings(
     val notifyOnAuthFailure: Boolean = true,
     val notifyOnStreamStateChange: Boolean = true,
     val soundEnabled: Boolean = true,
-    val vibrateEnabled: Boolean = true
+    val vibrateEnabled: Boolean = true,
+    val notifyBabyCry: Boolean = true,
+    val notifyMotion: Boolean = true,
+    val beepOnBabyCry: Boolean = true,
+    val babyCryThresholdDb: Float = 65f
 )
 
 class CamLinkNotificationManager(private val context: Context) {
@@ -68,14 +72,9 @@ class CamLinkNotificationManager(private val context: Context) {
 
     fun addLog(title: String, message: String, type: NotificationType) {
         val currentSettings = _settings.value
-        val shouldLog = when (type) {
-            NotificationType.INFO -> currentSettings.notifyOnStreamStateChange
-            NotificationType.SUCCESS -> currentSettings.notifyOnConnect
-            NotificationType.WARNING -> currentSettings.notifyOnDisconnect
-            NotificationType.DANGER -> currentSettings.notifyOnAuthFailure
-        }
+        val isMotion = title.contains("Hareket", ignoreCase = true)
 
-        if (shouldLog) {
+        if (isMotion && currentSettings.notifyMotion) {
             val newLog = NotificationLog(title = title, message = message, type = type)
             _logs.value = listOf(newLog) + _logs.value.take(49) // Keep last 50 logs
             
@@ -109,10 +108,11 @@ class CamLinkNotificationManager(private val context: Context) {
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setAutoCancel(true)
 
-            if (_settings.value.soundEnabled) {
+            val isDetection = title.contains("Bebek", ignoreCase = true) || title.contains("Hareket", ignoreCase = true)
+            if (_settings.value.soundEnabled && !isDetection) {
                 builder.setDefaults(NotificationCompat.DEFAULT_SOUND)
             }
-            if (_settings.value.vibrateEnabled) {
+            if (_settings.value.vibrateEnabled && !isDetection) {
                 builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE)
             }
 

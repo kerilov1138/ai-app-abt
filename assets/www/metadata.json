@@ -1,5 +1,6 @@
 {
-  "name": "Country Puzzle",
-  "description": "A standalone 3D globe geography game. No API keys or AI required. Works offline once loaded (requires internet only for initial map data).",
-  "requestFramePermissions": []
+  "name": "Kıvanç Gözlem",
+  "description": "Eski Android telefonunuzu düşük gecikmeli P2P kamera ve ses yayınına dönüştürün. Sunucu gerektirmeden doğrudan QR kod ile çalışır.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

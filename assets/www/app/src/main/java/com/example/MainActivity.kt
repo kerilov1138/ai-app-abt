@@ -66,6 +66,19 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioPlayer: AudioPlayer
     private lateinit var cameraCapturer: CameraCapturer
     private var localStreamServer: LocalStreamServer? = null
+    private val deepLinkMode = androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    private fun handleIntent(intent: android.content.Intent?) {
+        val data = intent?.data?.toString()
+        if (data == "camlink://broadcaster" || data == "https://camlink.app/broadcaster") {
+            deepLinkMode.value = "broadcaster"
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +92,8 @@ class MainActivity : ComponentActivity() {
         audioPlayer = com.example.stream.StreamingService.activeAudioPlayer!!
         cameraCapturer = com.example.stream.StreamingService.activeCameraCapturer!!
         localStreamServer = com.example.stream.StreamingService.activeServer!!
+
+        handleIntent(intent)
 
         setContent {
             // Professional Polish Theme
@@ -99,10 +114,14 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    val deepLinkValue = deepLinkMode.value
                     CamLinkApp(
                         server = localStreamServer!!,
                         cameraCapturer = cameraCapturer,
-                        notificationManager = notificationManager
+                        audioCapturer = audioCapturer,
+                        notificationManager = notificationManager,
+                        initialAppMode = deepLinkValue,
+                        onModeChanged = { deepLinkMode.value = it }
                     )
                 }
             }
@@ -111,12 +130,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (!com.example.stream.StreamingService.isServiceRunning) {
-            localStreamServer?.stop()
-            cameraCapturer.stop()
-            audioCapturer.release()
-            audioPlayer.release()
-        }
+        // Completely stop foreground service and release all resources when exiting/destroying the app
+        com.example.stream.StreamingService.stopService(this)
+        com.example.stream.StreamingService.serviceLifecycleOwner.stop()
+        localStreamServer?.stop()
+        cameraCapturer.stop()
+        audioCapturer.release()
+        audioPlayer.release()
     }
 }
 
@@ -125,18 +145,26 @@ class MainActivity : ComponentActivity() {
 fun CamLinkApp(
     server: LocalStreamServer,
     cameraCapturer: CameraCapturer,
-    notificationManager: CamLinkNotificationManager
+    audioCapturer: com.example.stream.AudioCapturer,
+    notificationManager: CamLinkNotificationManager,
+    initialAppMode: String? = null,
+    onModeChanged: (String?) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    androidx.activity.compose.BackHandler {
+        (context as? android.app.Activity)?.finish()
+    }
 
     // Observe logs and notification settings
     val logs by notificationManager.logs.collectAsStateWithLifecycle()
     val notificationSettings by notificationManager.settings.collectAsStateWithLifecycle()
 
     // App Mode (null for Selection/Onboarding, "broadcaster", "viewer")
-    var selectedAppMode by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAppMode by rememberSaveable { mutableStateOf<String?>("broadcaster") }
     var showBroadcasterConsentDialog by rememberSaveable { mutableStateOf(false) }
+    var showAppInstallQrDialog by rememberSaveable { mutableStateOf(false) }
 
     // App Navigation tabs (Yayın & Bağlantı, İzleyici Paneli, Bildirimler)
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -176,6 +204,17 @@ fun CamLinkApp(
         }
     }
 
+    LaunchedEffect(initialAppMode) {
+        if (initialAppMode != null) {
+            selectedAppMode = initialAppMode
+            if (initialAppMode == "broadcaster") {
+                selectedTab = 0
+                permissionLauncher.launch(requiredPermissions)
+            }
+            onModeChanged(null)
+        }
+    }
+
     LaunchedEffect(permissionsGranted, selectedAppMode) {
         if (permissionsGranted && selectedAppMode != null) {
             com.example.stream.StreamingService.serviceLifecycleOwner.resume()
@@ -193,6 +232,22 @@ fun CamLinkApp(
     var cameraMuted by remember { mutableStateOf(server.cameraMuted) }
     var micMuted by remember { mutableStateOf(server.micMuted) }
     var cameraToggleState by remember { mutableStateOf(false) }
+
+    var isIncomingAudioMuted by remember { mutableStateOf(true) }
+    var viewerMicMuted by remember { mutableStateOf(true) }
+    var isReceiverScreenDimmed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isIncomingAudioMuted) {
+        server.isIncomingAudioMuted = isIncomingAudioMuted
+    }
+
+    LaunchedEffect(isServerRunning) {
+        if (isServerRunning) {
+            server.start()
+        } else {
+            server.stop()
+        }
+    }
 
     // Live Web Stream previews
     var localPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -248,6 +303,48 @@ fun CamLinkApp(
         }
     }
 
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 0) {
+            selectedAppMode = "broadcaster"
+            // Cancel viewer mode direct jobs when becoming broadcaster
+            directJobs.forEach { it.cancel() }
+            directJobs = emptyList()
+            isDirectConnected = false
+        } else if (selectedTab == 1) {
+            selectedAppMode = "viewer"
+        }
+    }
+
+    LaunchedEffect(selectedAppMode) {
+        if (selectedAppMode != null) {
+            server.androidMode = selectedAppMode!!
+        }
+    }
+
+    LaunchedEffect(selectedAppMode, directIp, directPort, directPasscode, micMuted, viewerMicMuted, permissionsGranted) {
+        val isBroadcasterUploading = (selectedAppMode == "broadcaster") && !micMuted
+        val isViewerUploading = (selectedAppMode == "viewer") && !viewerMicMuted
+        val shouldUploadAudio = permissionsGranted && (isBroadcasterUploading || isViewerUploading) &&
+                directIp.isNotEmpty() && directIp != "192.168.1." && directIp != "192.168.0."
+        if (shouldUploadAudio) {
+            val audioListener = object : AudioCapturer.AudioListener {
+                override fun onAudioChunk(bytes: ByteArray) {
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        uploadAudioFrame(directIp, directPort, directPasscode, bytes)
+                    }
+                }
+            }
+            audioCapturer.registerListener(audioListener)
+            try {
+                while (true) {
+                    kotlinx.coroutines.delay(1000)
+                }
+            } finally {
+                audioCapturer.unregisterListener(audioListener)
+            }
+        }
+    }
+
     var localIp by remember { mutableStateOf(getLocalIpAddress(context)) }
     var customIpOverride by rememberSaveable { mutableStateOf("") }
     val displayIp = if (customIpOverride.isNotEmpty()) customIpOverride else localIp
@@ -277,24 +374,38 @@ fun CamLinkApp(
     LaunchedEffect(permissionsGranted, cameraMuted, lowDataMode, selectedAppMode, cameraToggleState, activePreviewView, isActivityVisible) {
         val shouldCapture = permissionsGranted && !cameraMuted && (selectedAppMode == "broadcaster")
         if (shouldCapture) {
-            val camLifecycleOwner = com.example.stream.StreamingService.serviceLifecycleOwner
-            val previewToUse = if (isActivityVisible) activePreviewView else null
-            cameraCapturer.start(camLifecycleOwner, lowDataMode, previewToUse, object : CameraCapturer.FrameCallback {
-                override fun onFrame(jpegBytes: ByteArray) {
-                    server.latestFrame.set(jpegBytes)
-                    // Decode bitmap to show local preview on screen (on main thread)
-                    try {
-                        val bmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            localPreviewBitmap = bmp
+            try {
+                val camLifecycleOwner = com.example.stream.StreamingService.serviceLifecycleOwner
+                val previewToUse = if (isActivityVisible) activePreviewView else null
+                cameraCapturer.start(camLifecycleOwner, lowDataMode, previewToUse, object : CameraCapturer.FrameCallback {
+                    override fun onFrame(jpegBytes: ByteArray) {
+                        server.latestFrame.set(jpegBytes)
+                        // Decode bitmap to show local preview on screen (on main thread)
+                        try {
+                            val bmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                localPreviewBitmap = bmp
+                            }
+                        } catch (e: Exception) {}
+
+                        // If we are broadcasting but have previously configured a direct receiver connection,
+                        // upload our frame to the receiver's server so they can display our video in real-time.
+                        if (directIp.isNotEmpty() && directIp != "192.168.1." && directIp != "192.168.0.") {
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                uploadFrame(directIp, directPort, directPasscode, jpegBytes)
+                            }
                         }
-                    } catch (e: Exception) {}
+                    }
+                })
+                // Poll and keep isVirtualActive updated
+                while (true) {
+                    isVirtualActive = cameraCapturer.isVirtualCameraActive()
+                    kotlinx.coroutines.delay(500)
                 }
-            })
-            // Poll and keep isVirtualActive updated
-            while (true) {
-                isVirtualActive = cameraCapturer.isVirtualCameraActive()
-                kotlinx.coroutines.delay(500)
+            } finally {
+                cameraCapturer.stop()
+                localPreviewBitmap = null
+                isVirtualActive = false
             }
         } else {
             cameraCapturer.stop()
@@ -375,14 +486,15 @@ fun CamLinkApp(
     }
 
     if (selectedAppMode == null) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF1C1B1F))
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF1C1B1F))
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             // Elegant glowing circle with video camera icon
             Box(
                 modifier = Modifier
@@ -426,41 +538,102 @@ fun CamLinkApp(
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, Color(0xFF4F378B))
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
                         modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFD0BCFF).copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.SettingsRemote,
-                            contentDescription = "Yayıncı",
-                            tint = Color(0xFFD0BCFF),
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFD0BCFF).copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SettingsRemote,
+                                contentDescription = "Yayıncı",
+                                tint = Color(0xFFD0BCFF),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Yayıncı Modu (Kamera Paylaş)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Bu telefonun kamerasını ve sesini canlı olarak paylaşır. Diğer telefon bu yayını izler.",
+                                fontSize = 12.sp,
+                                color = Color.LightGray
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Yayıncı Modu (Kamera Paylaş)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Bu telefonun kamerasını ve sesini canlı olarak paylaşır. Diğer telefon bu yayını izler.",
-                            fontSize = 12.sp,
-                            color = Color.LightGray
-                        )
+
+                    HorizontalDivider(
+                        color = Color(0xFF381E72),
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Enlarged QR code display for easy scanning
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                            modifier = Modifier
+                                .size(150.dp)
+                                .padding(4.dp)
+                        ) {
+                            val qrBmp = remember(displayIp, passcode) { generateQrCode("http://$displayIp:${server.port}/?passcode=$passcode&role=broadcaster", 512) }
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (qrBmp != null) {
+                                    Image(
+                                        bitmap = qrBmp.asImageBitmap(),
+                                        contentDescription = "Hızlı Yayıncı Başlatma QR",
+                                        modifier = Modifier.fillMaxSize().padding(8.dp)
+                                    )
+                                } else {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Hızlı Yayıncı QR Kodu",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Diğer telefona bu QR'ı okutarak o telefonun anında Yayıncı Girişi yapmasını sağlayabilirsiniz.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFC4C4C4)
+                            )
+                        }
                     }
+
+
                 }
             }
 
@@ -517,6 +690,8 @@ fun CamLinkApp(
                 }
             }
         }
+            
+        }
     } else {
         Scaffold(
             topBar = {
@@ -569,17 +744,17 @@ fun CamLinkApp(
                             }
                         }
                     },
+
                     actions = {
-                        TextButton(
+                        IconButton(
                             onClick = {
-                                selectedAppMode = null
+                                (context as? android.app.Activity)?.finish()
                             }
                         ) {
-                            Text(
-                                text = "Mod Değiştir",
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                            Icon(
+                                imageVector = Icons.Default.ExitToApp,
+                                contentDescription = "Çıkış Yap",
+                                tint = Color(0xFFEF4444)
                             )
                         }
                     },
@@ -592,36 +767,44 @@ fun CamLinkApp(
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface
                 ) {
-                    if (selectedAppMode == "broadcaster") {
-                        NavigationBarItem(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
-                            icon = { Icon(Icons.Default.SettingsRemote, contentDescription = "Yayın & Bağlantı") },
-                            label = { Text("Yayıncı", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = Color.Gray,
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                            )
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.SettingsRemote, contentDescription = "Yayın & Bağlantı") },
+                        label = { Text("Yayıncı", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            unselectedIconColor = Color.Gray,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                         )
-                    } else {
-                        NavigationBarItem(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
-                            icon = { Icon(Icons.Default.Tv, contentDescription = "İzleyici Paneli") },
-                            label = { Text("Alıcı", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.secondary,
-                                unselectedIconColor = Color.Gray,
-                                indicatorColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
-                            )
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Tv, contentDescription = "İzleyici Paneli") },
+                        label = { Text("Alıcı", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.secondary,
+                            unselectedIconColor = Color.Gray,
+                            indicatorColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f)
                         )
-                    }
+                    )
                     NavigationBarItem(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
+                        icon = { Icon(Icons.Default.Help, contentDescription = "Kılavuz") },
+                        label = { Text("Kılavuz", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            unselectedIconColor = Color.Gray,
+                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        )
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
                         icon = { Icon(Icons.Default.NotificationsActive, contentDescription = "Bildirimler") },
-                        label = { Text("Bildirim", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                        label = { Text("Bildirim", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.tertiary,
                             unselectedIconColor = Color.Gray,
@@ -760,6 +943,12 @@ fun CamLinkApp(
                             },
                             qrTypeSelection = receiverQrTypeSelection,
                             onQrTypeSelectionChange = { receiverQrTypeSelection = it },
+                            isIncomingAudioMuted = isIncomingAudioMuted,
+                            onIncomingAudioMuteToggle = { isIncomingAudioMuted = it },
+                            viewerMicMuted = viewerMicMuted,
+                            onViewerMicMuteToggle = { viewerMicMuted = it },
+                            isReceiverScreenDimmed = isReceiverScreenDimmed,
+                            onReceiverScreenDimmedToggle = { isReceiverScreenDimmed = it },
                             onConnectDirect = {
                                 isConnectingDirect = true
                                 directJobs.forEach { it.cancel() }
@@ -787,7 +976,7 @@ fun CamLinkApp(
                                 
                                 val audioJob = scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                     try {
-                                        streamAudio(audioUrl, server.audioPlayer, { error ->
+                                        streamAudio(audioUrl, server.audioPlayer, { isIncomingAudioMuted }, { error ->
                                             Log.e("CamLink", "Direct audio error", error)
                                         })
                                     } catch (e: Exception) {}
@@ -802,18 +991,45 @@ fun CamLinkApp(
                                 isConnectingDirect = false
                                 webBroadcasterBitmap = null
                                 server.audioPlayer.stop()
+                            },
+                            onBroadcasterScanned = { ip, port, passcode ->
+                                if (ip.isNotEmpty()) {
+                                    directIp = ip
+                                    directPort = port
+                                    directPasscode = passcode
+                                }
+                                selectedAppMode = "broadcaster"
+                                selectedTab = 0
+                                permissionLauncher.launch(requiredPermissions)
                             }
                         )
-                        2 -> SettingsAndLogsTab(
+                        2 -> SetupGuideTab(
+                            localIp = displayIp,
+                            serverPort = server.port
+                        )
+                        3 -> SettingsAndLogsTab(
                             logs = logs,
                             settings = notificationSettings,
-                            onSettingsChange = { notificationManager.updateSettings(it) },
+                            onSettingsChange = { 
+                                notificationManager.updateSettings(it)
+                                server.notifyBabyCry.set(it.notifyBabyCry)
+                                server.notifyMotion.set(it.notifyMotion)
+                                server.beepOnBabyCry.set(it.beepOnBabyCry)
+                            },
                             onClearLogs = { notificationManager.clearLogs() }
                         )
                     }
                 }
             }
         }
+    }
+
+    if (showAppInstallQrDialog) {
+        AppInstallQrDialog(
+            localIp = displayIp,
+            serverPort = server.port,
+            onDismissRequest = { showAppInstallQrDialog = false }
+        )
     }
 }
 
@@ -845,6 +1061,21 @@ fun BroadcasterTab(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    var isScreenDimmed by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(isScreenDimmed) {
+        val window = (context as? android.app.Activity)?.window
+        if (window != null) {
+            val lp = window.attributes
+            if (isScreenDimmed) {
+                lp.screenBrightness = 0.01f
+            } else {
+                lp.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = lp
+        }
+    }
 
     val connectionUrl = "http://$localIp:${server.port}/?passcode=${server.passcode}&role=viewer"
     val qrCodeBitmap = remember(connectionUrl) {
@@ -991,20 +1222,37 @@ fun BroadcasterTab(
                                     }
                                 }
                             } else {
-                                // Real Camera - Use smooth hardware accelerated PreviewView
-                                androidx.compose.ui.viewinterop.AndroidView(
-                                    factory = { ctx ->
-                                        androidx.camera.view.PreviewView(ctx).apply {
-                                            scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
-                                            onActivePreviewViewChange(this)
+                                // Real Camera - Use smooth hardware accelerated PreviewView with expand option
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    androidx.compose.ui.viewinterop.AndroidView(
+                                        factory = { ctx ->
+                                            androidx.camera.view.PreviewView(ctx).apply {
+                                                scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+                                                onActivePreviewViewChange(this)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize(),
+                                        update = { _ -> }
+                                    )
+                                    IconButton(
+                                        onClick = { isFullScreenPreviewOpen = true },
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(8.dp)
+                                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+                                            .size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ZoomIn,
+                                            contentDescription = "Büyüt",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    DisposableEffect(Unit) {
+                                        onDispose {
+                                            onActivePreviewViewChange(null)
                                         }
-                                    },
-                                    modifier = Modifier.fillMaxSize(),
-                                    update = { _ -> }
-                                )
-                                DisposableEffect(Unit) {
-                                    onDispose {
-                                        onActivePreviewViewChange(null)
                                     }
                                 }
                             }
@@ -1065,16 +1313,84 @@ fun BroadcasterTab(
                                 }
 
                                 // Info label
-                                Text(
-                                    text = "Gerçek Boyut (Kapatmak için dokunun)",
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    fontSize = 14.sp,
+                                Column(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
-                                        .padding(bottom = 24.dp)
-                                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                                )
+                                        .padding(bottom = 24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Text(
+                                        text = "Gerçek Boyut (Kapatmak için dokunun)",
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        fontSize = 12.sp,
+                                        modifier = Modifier
+                                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+
+                                    Row(
+                                        modifier = Modifier
+                                            .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(24.dp))
+                                            .padding(horizontal = 20.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        IconButton(
+                                            onClick = { onCameraMuteToggle(!cameraMuted) },
+                                            colors = IconButtonDefaults.iconButtonColors(
+                                                containerColor = if (cameraMuted) Color.Red.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.1f)
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = if (cameraMuted) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                                                contentDescription = "Kamera Sessiz",
+                                                tint = if (cameraMuted) Color.Red else Color.White
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { onMicMuteToggle(!micMuted) },
+                                            colors = IconButtonDefaults.iconButtonColors(
+                                                containerColor = if (micMuted) Color.Red.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.1f)
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = if (micMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                                                contentDescription = "Mic Sessiz",
+                                                tint = if (micMuted) Color.Red else Color.White
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = {
+                                                onCameraSwitchClick()
+                                            },
+                                            colors = IconButtonDefaults.iconButtonColors(
+                                                containerColor = Color.White.copy(alpha = 0.1f)
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Cameraswitch,
+                                                contentDescription = "Kamera Çevir",
+                                                tint = Color.White
+                                            )
+                                        }
+
+                                        IconButton(
+                                            onClick = { isFullScreenPreviewOpen = false },
+                                            colors = IconButtonDefaults.iconButtonColors(
+                                                containerColor = Color.Red.copy(alpha = 0.2f)
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FullscreenExit,
+                                                contentDescription = "Küçült",
+                                                tint = Color.Red
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1112,7 +1428,6 @@ fun BroadcasterTab(
 
                         IconButton(
                             onClick = {
-                                cameraCapturer.toggleCameraFace()
                                 onCameraSwitchClick()
                             },
                             colors = IconButtonDefaults.iconButtonColors(
@@ -1125,7 +1440,58 @@ fun BroadcasterTab(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
+
+                        IconButton(
+                            onClick = { isScreenDimmed = true },
+                            colors = IconButtonDefaults.iconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Brightness2,
+                                contentDescription = "Ekranı Karart (Güç Tasarrufu)",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
+
+                    if (isServerRunning) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Yayın URL Adresi (Bağlantı için):",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.LightGray
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                androidx.compose.foundation.text.selection.SelectionContainer {
+                                    Text(
+                                        text = connectionUrl,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Trigger buttons removed as motion detection is now automatic and baby cry is removed.
                 }
             }
         }
@@ -1190,29 +1556,6 @@ fun BroadcasterTab(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Info,
-                                        contentDescription = "Bilgi",
-                                        tint = Color(0xFFD0BCFF),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Neden Bağlantı Kurulamıyor olabilir?",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFD0BCFF)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Şu an uygulama bulut tabanlı bir sanal emülatörde çalışmaktadır. Bu nedenle tespit edilen yerel IP adresi ($localIp), fiziksel telefonunuzun veya bilgisayarınızın bağlı olduğu yerel Wi-Fi ağı ile aynı değildir ve yönlendirilemez.\n\nGerçek bağlantıyı test etmek için sağ üstteki menüden uygulamayı APK olarak indirip gerçek bir Android telefona kurmanız gerekmektedir. Gerçek telefonda her iki cihaz da aynı Wi-Fi ağına bağlandığında P2P yayın saniyeler içinde sorunsuz başlayacaktır.",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFE6E1E5),
-                                    lineHeight = 15.sp
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
                                 Text(
                                     text = "🌐 Özel IP / Yönlendirme Girin:",
                                     fontSize = 11.sp,
@@ -1334,6 +1677,50 @@ fun BroadcasterTab(
             }
         }
     }
+
+    if (isScreenDimmed) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { isScreenDimmed = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { isScreenDimmed = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Brightness2,
+                        contentDescription = null,
+                        tint = Color.Gray.copy(alpha = 0.3f),
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Text(
+                        text = "Güç Tasarruf Modu Aktif",
+                        color = Color.Gray.copy(alpha = 0.4f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Ekran kapatıldı ve parlaklık en düşük seviyeye alındı.\nUykudan uyandırmak için ekrana dokunun.",
+                        color = Color.Gray.copy(alpha = 0.3f),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 32.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 // ================== TAB 1: ALICI / İZLEYİCİ EKRANI (RECEIVER SCREEN) ==================
@@ -1365,26 +1752,61 @@ fun ReceiverTab(
     qrTypeSelection: Int,
     onQrTypeSelectionChange: (Int) -> Unit,
     onConnectDirect: () -> Unit,
-    onDisconnectDirect: () -> Unit
+    onDisconnectDirect: () -> Unit,
+    isIncomingAudioMuted: Boolean,
+    onIncomingAudioMuteToggle: (Boolean) -> Unit,
+    viewerMicMuted: Boolean,
+    onViewerMicMuteToggle: (Boolean) -> Unit,
+    isReceiverScreenDimmed: Boolean,
+    onReceiverScreenDimmedToggle: (Boolean) -> Unit,
+    onBroadcasterScanned: (String, String, String) -> Unit = { _, _, _ -> }
 ) {
     val connectionUrl = "http://$localIp:${server.port}/?passcode=$passcode&role=broadcaster"
 
     var connectionModeTab by remember { mutableIntStateOf(0) } // 0: Web QR, 1: Direct Android IP
     var showQrScanner by remember { mutableStateOf(false) }
+    var isFullScreenPreviewOpen by remember { mutableStateOf(false) }
 
     val isIncomingStreamActive = (activeConnections && clientType == "Yayıncı") || isDirectConnected
+
+    val context = LocalContext.current
+    var remoteTorchActive by remember { mutableStateOf(false) }
+    var remoteWifiSignal by remember { mutableIntStateOf(4) }
+    var localWifiSignal by remember { mutableIntStateOf(com.example.stream.getWifiSignalLevel(context)) }
+
+    LaunchedEffect(isIncomingStreamActive, directIp, directPort, directPasscode) {
+        if (isIncomingStreamActive) {
+            while (true) {
+                fetchRemoteStatus(directIp, directPort, directPasscode) { isTorchOn, wifiSignal ->
+                    remoteTorchActive = isTorchOn
+                    remoteWifiSignal = wifiSignal
+                }
+                localWifiSignal = com.example.stream.getWifiSignalLevel(context)
+                kotlinx.coroutines.delay(3000)
+            }
+        }
+    }
 
     if (showQrScanner) {
         QrScannerDialog(
             cameraCapturer = cameraCapturer,
             onQrScanned = { qrText ->
-                val parsed = parseQrCodeUrl(qrText)
-                if (parsed != null) {
-                    onDirectIpChange(parsed.first)
-                    onDirectPortChange(parsed.second)
-                    onDirectPasscodeChange(parsed.third)
-                    // Trigger asynchronous connection
-                    onConnectDirect()
+                if (qrText == "camlink://broadcaster" || qrText == "https://camlink.app/broadcaster" || qrText.contains("broadcaster")) {
+                    val parsed = parseQrCodeUrl(qrText)
+                    if (parsed != null) {
+                        onBroadcasterScanned(parsed.first, parsed.second, parsed.third)
+                    } else {
+                        onBroadcasterScanned("", "", "")
+                    }
+                } else {
+                    val parsed = parseQrCodeUrl(qrText)
+                    if (parsed != null) {
+                        onDirectIpChange(parsed.first)
+                        onDirectPortChange(parsed.second)
+                        onDirectPasscodeChange(parsed.third)
+                        // Trigger asynchronous connection
+                        onConnectDirect()
+                    }
                 }
                 showQrScanner = false
             },
@@ -1392,6 +1814,59 @@ fun ReceiverTab(
                 showQrScanner = false
             }
         )
+    }
+
+    if (isFullScreenPreviewOpen && webBroadcasterBitmap != null) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { isFullScreenPreviewOpen = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.95f))
+                    .clickable { isFullScreenPreviewOpen = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    bitmap = webBroadcasterBitmap.asImageBitmap(),
+                    contentDescription = "Tam Ekran Gelen Yayın",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+                
+                // Close button
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(24.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+                        .clickable { isFullScreenPreviewOpen = false }
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Kapat",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // Info label
+                Text(
+                    text = "Gerçek Boyut (Kapatmak için dokunun)",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 24.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
     }
 
     LazyColumn(
@@ -1588,15 +2063,47 @@ fun ReceiverTab(
                             .fillMaxWidth()
                             .aspectRatio(4f / 3f)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.Black),
+                            .background(Color.Black)
+                            .clickable(enabled = isIncomingStreamActive && isWatchingVideo && webBroadcasterBitmap != null) {
+                                isFullScreenPreviewOpen = true
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         if (isIncomingStreamActive && isWatchingVideo && webBroadcasterBitmap != null) {
-                            Image(
-                                bitmap = webBroadcasterBitmap.asImageBitmap(),
-                                contentDescription = "Gelen Yayın Akışı",
-                                modifier = Modifier.fillMaxSize()
-                            )
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Image(
+                                    bitmap = webBroadcasterBitmap.asImageBitmap(),
+                                    contentDescription = "Gelen Yayın Akışı",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                                
+                                // A nice visual overlay / badge showing search icon for zoom
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(8.dp)
+                                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ZoomIn,
+                                            contentDescription = "Zoom",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Tam Ekran",
+                                            color = Color.White,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+                            }
                             
                             // Streaming indicator overlay
                             Box(
@@ -1662,27 +2169,65 @@ fun ReceiverTab(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Audio status display
+                        // Left-aligned controls (Speaker, Mic, Brightness)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.weight(1f)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = if (isIncomingStreamActive) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
-                                contentDescription = null,
-                                tint = if (isIncomingStreamActive) MaterialTheme.colorScheme.primary else Color.Gray,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = if (isIncomingStreamActive) "Ses Aktif" else "Ses Bağlantısı Yok",
-                                color = if (isIncomingStreamActive) Color.White else Color.Gray,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            // 1. Broadcaster Incoming Audio Toggle (On by default)
+                            IconButton(
+                                onClick = { onIncomingAudioMuteToggle(!isIncomingAudioMuted) },
+                                enabled = isIncomingStreamActive,
+                                modifier = Modifier.size(36.dp),
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = if (isIncomingAudioMuted) Color(0xFFC62828).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                    disabledContainerColor = Color.Gray.copy(alpha = 0.05f)
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = if (isIncomingAudioMuted || !isIncomingStreamActive) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                    contentDescription = "Yayın Sesi",
+                                    tint = if (!isIncomingStreamActive) Color.Gray else if (isIncomingAudioMuted) Color(0xFFE57373) else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            // 2. Viewer Microphone Toggle (Off by default)
+                            IconButton(
+                                onClick = { onViewerMicMuteToggle(!viewerMicMuted) },
+                                enabled = isIncomingStreamActive,
+                                modifier = Modifier.size(36.dp),
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = if (viewerMicMuted) Color(0xFFC62828).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                    disabledContainerColor = Color.Gray.copy(alpha = 0.05f)
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = if (viewerMicMuted || !isIncomingStreamActive) Icons.Default.MicOff else Icons.Default.Mic,
+                                    contentDescription = "Benim Mikrofonum",
+                                    tint = if (!isIncomingStreamActive) Color.Gray else if (viewerMicMuted) Color(0xFFE57373) else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            // 3. Receiver Screen Dimming (Güç Tasarrufu)
+                            IconButton(
+                                onClick = { onReceiverScreenDimmedToggle(true) },
+                                modifier = Modifier.size(36.dp),
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Brightness2,
+                                    contentDescription = "Ekranı Karart (Güç Tasarrufu)",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
 
-                        // Toggle button for watching video
+                        // Right-aligned video toggle button
                         Button(
                             onClick = { onWatchingVideoToggle(!isWatchingVideo) },
                             colors = ButtonDefaults.buttonColors(
@@ -1702,6 +2247,97 @@ fun ReceiverTab(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp
                             )
+                        }
+                    }
+
+                    if (isIncomingStreamActive) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                            ),
+                            border = BorderStroke(1.dp, Color.Gray.copy(alpha = 0.15f)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚡ Uzaktan Cihaz Kontrolü",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    
+                                    // Wi-Fi signal display for BOTH devices side-by-side
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        // Receiver Wi-Fi
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text("Alıcı: ", fontSize = 10.sp, color = Color.Gray)
+                                            Icon(
+                                                imageVector = if (localWifiSignal == 0) Icons.Default.WifiOff else Icons.Default.Wifi,
+                                                contentDescription = "Alıcı Sinyal",
+                                                tint = if (localWifiSignal >= 3) Color.Green else if (localWifiSignal >= 1) Color.Yellow else Color.Red,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+
+                                        // Broadcaster Wi-Fi
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Text("Yayıncı: ", fontSize = 10.sp, color = Color.Gray)
+                                            Icon(
+                                                imageVector = if (remoteWifiSignal == 0) Icons.Default.WifiOff else Icons.Default.Wifi,
+                                                contentDescription = "Yayıncı Sinyal",
+                                                tint = if (remoteWifiSignal >= 3) Color.Green else if (remoteWifiSignal >= 1) Color.Yellow else Color.Red,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Refresh status button
+                                    IconButton(
+                                        onClick = {
+                                            fetchRemoteStatus(directIp, directPort, directPasscode) { isTorchOn, wifiSignal ->
+                                                remoteTorchActive = isTorchOn
+                                                remoteWifiSignal = wifiSignal
+                                            }
+                                            localWifiSignal = com.example.stream.getWifiSignalLevel(context)
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Yenile",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -1806,9 +2442,376 @@ fun ReceiverTab(
             }
         }
     }
+
+    if (isReceiverScreenDimmed) {
+        androidx.compose.ui.window.Dialog(
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+                usePlatformDefaultWidth = false
+            ),
+            onDismissRequest = { onReceiverScreenDimmedToggle(false) }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { onReceiverScreenDimmedToggle(false) },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Brightness2,
+                        contentDescription = "Güç Tasarrufu Aktif",
+                        tint = Color.DarkGray,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Güç Tasarrufu Modu Aktif",
+                        color = Color.DarkGray,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Ekran karartıldı. Çıkmak için ekrana dokunun.",
+                        color = Color.DarkGray.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
 }
 
-// ================== TAB 2: BİLDİRİM VE GÜVENLİK GÜNLÜKLERİ (SETTINGS & LOGS) ==================
+// ================== TAB 2: GÜVENLİ OLMAYAN TARAYICI İZİNLERİ KILAVUZU (BROWSER PERMISSIONS GUIDE) ==================
+@Composable
+fun SetupGuideTab(
+    localIp: String,
+    serverPort: Int
+) {
+    val context = LocalContext.current
+    val targetUrl = "http://$localIp:$serverPort"
+    
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                text = "📖 Tarayıcı Kurulum Kılavuzu",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Farklı bir telefon veya cihazın tarayıcısını yayıncı olarak bağlarken, tarayıcı güvenlik politikaları gereği (güvenli olmayan HTTP bağlantısı nedeniyle) kamera ve mikrofon izinleri engellenir. Bu engeli Chrome tabanlı tarayıcılarda kaldırmak için aşağıdaki kolay adımları takip edebilirsiniz.",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+        }
+
+        // STEP 1: Copy Link Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2930)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("1", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = "Yayın Adresini Kopyalayın",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Diğer telefona tanımlayacağınız yayın sunucusu adresi:",
+                        fontSize = 11.sp,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = targetUrl,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("CamLink Address", targetUrl)
+                                clipboardManager.setPrimaryClip(clip)
+                                Toast.makeText(context, "Yayın adresi kopyalandı!", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Kopyala",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val targetQrBmp = remember(targetUrl) {
+                        generateQrCode(targetUrl, 384)
+                    }
+                    if (targetQrBmp != null) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Image(
+                                    bitmap = targetQrBmp.asImageBitmap(),
+                                    contentDescription = "Yayın Adresi QR Kodu",
+                                    modifier = Modifier
+                                        .size(140.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White)
+                                        .padding(8.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Yayın Adresini Diğer Cihaza Okutun",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.LightGray
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // STEP 2: Instructions Card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2B2930)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .background(MaterialTheme.colorScheme.secondary, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("2", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = "Chrome Ayarlarını Yapın",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val flagsUrl = "chrome://flags/#unsafely-treat-insecure-origin-as-secure"
+                    val flagsQrBmp = remember(flagsUrl) {
+                        generateQrCode(flagsUrl, 384)
+                    }
+                    if (flagsQrBmp != null) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Image(
+                                    bitmap = flagsQrBmp.asImageBitmap(),
+                                    contentDescription = "Chrome Flags QR Kodu",
+                                    modifier = Modifier
+                                        .size(140.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White)
+                                        .padding(8.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Ayar Sayfası QR Kodu",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.LightGray
+                                )
+                                SelectionContainer {
+                                    Text(
+                                        text = flagsUrl,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    val steps = listOf(
+                        "Alıcı/Yayıncı olacak cihazda Google Chrome tarayıcısını açın.",
+                        "Adres satırına tam olarak şunu yazıp gidin:\nchrome://flags",
+                        "Sayfanın üstündeki arama çubuğuna şunu yazın:\nunsafely-treat-insecure-origin-as-secure",
+                        "İlgili ayarın altındaki metin kutusuna kopyaladığınız adresi yapıştırın:\n$targetUrl",
+                        "Sağındaki seçeneği \"Disabled\" konumundan \"Enabled\" yapın.",
+                        "Ekranın en altında beliren \"Relaunch\" (Yeniden Başlat) butonuna basarak tarayıcıyı yeniden başlatın."
+                    )
+                    
+                    steps.forEachIndexed { index, step ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "•",
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = step,
+                                fontSize = 12.sp,
+                                color = Color.LightGray,
+                                lineHeight = 16.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // STEP 3: APK Alternative Card (Recommended)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "🚀 En Kolay Yol: Uygulama Kurulumu",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Tarayıcı ayarları ve kısıtlamaları ile hiç uğraşmak istemiyor musunuz? İkinci telefona da bu uygulamayı yükleyip 'Yayıncı' modunda açarak, %100 yerel ve tam performansla anında bağlanabilirsiniz! Aşağıdaki QR kodu okutarak uygulamayı doğrudan yerel sunucunuzdan indirebilirsiniz.",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Start
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    val apkDownloadUrl = "$targetUrl/download-apk"
+                    val qrBmp = remember(apkDownloadUrl) {
+                        generateQrCode(apkDownloadUrl, 384)
+                    }
+                    
+                    if (qrBmp != null) {
+                        Image(
+                            bitmap = qrBmp.asImageBitmap(),
+                            contentDescription = "APK Download QR",
+                            modifier = Modifier
+                                .size(140.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White)
+                                .padding(8.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = apkDownloadUrl,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            try {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(apkDownloadUrl))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Hata oluştu!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        Text("Uygulama APK Dosyasını İndir", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ================== TAB 3: BİLDİRİM VE GÜVENLİK GÜNLÜKLERİ (SETTINGS & LOGS) ==================
 @Composable
 fun SettingsAndLogsTab(
     logs: List<NotificationLog>,
@@ -1844,34 +2847,10 @@ fun SettingsAndLogsTab(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 NotificationToggle(
-                    title = "Bağlantı Bildirimleri",
-                    subtitle = "Yeni bir izleyici bağlandığında uyar",
-                    checked = settings.notifyOnConnect,
-                    onCheckedChange = { onSettingsChange(settings.copy(notifyOnConnect = it)) }
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray.copy(alpha = 0.2f))
-
-                NotificationToggle(
-                    title = "Bağlantı Kesilme Bildirimleri",
-                    subtitle = "İzleyiciler ayrıldığında uyar",
-                    checked = settings.notifyOnDisconnect,
-                    onCheckedChange = { onSettingsChange(settings.copy(notifyOnDisconnect = it)) }
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray.copy(alpha = 0.2f))
-
-                NotificationToggle(
-                    title = "Yetkisiz Erişim Teşebbüsleri",
-                    subtitle = "Hatalı şifre denemelerinde acil bildirim yolla",
-                    checked = settings.notifyOnAuthFailure,
-                    onCheckedChange = { onSettingsChange(settings.copy(notifyOnAuthFailure = it)) }
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray.copy(alpha = 0.2f))
-
-                NotificationToggle(
-                    title = "Yayın Akışı Durum Değişiklikleri",
-                    subtitle = "Kamera/Ses başlatılıp durdurulduğunda bildir",
-                    checked = settings.notifyOnStreamStateChange,
-                    onCheckedChange = { onSettingsChange(settings.copy(notifyOnStreamStateChange = it)) }
+                    title = "Hareket Algılaması",
+                    subtitle = "Yayın akışında herhangi bir hareket algılandığında uyar",
+                    checked = settings.notifyMotion,
+                    onCheckedChange = { onSettingsChange(settings.copy(notifyMotion = it)) }
                 )
             }
         }
@@ -2043,6 +3022,123 @@ fun generateQrCode(text: String, size: Int = 512): Bitmap? {
     }
 }
 
+private val isUploadingFrame = java.util.concurrent.atomic.AtomicBoolean(false)
+
+fun uploadFrame(ip: String, port: String, passcode: String, jpegBytes: ByteArray) {
+    if (ip.isEmpty() || port.isEmpty() || passcode.isEmpty()) return
+    if (!isUploadingFrame.compareAndSet(false, true)) {
+        // Skip frame if already uploading to maintain high performance and low latency
+        return
+    }
+    var connection: java.net.HttpURLConnection? = null
+    try {
+        val url = java.net.URL("http://$ip:$port/upload-video?passcode=$passcode")
+        connection = url.openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.connectTimeout = 1000
+        connection.readTimeout = 1000
+        connection.setFixedLengthStreamingMode(jpegBytes.size)
+        connection.setRequestProperty("Content-Type", "image/jpeg")
+        
+        connection.outputStream.use { os ->
+            os.write(jpegBytes)
+            os.flush()
+        }
+        
+        val responseCode = connection.responseCode
+        if (responseCode != java.net.HttpURLConnection.HTTP_OK) {
+            Log.e("CamLink", "Frame upload returned code: $responseCode")
+        }
+    } catch (e: Exception) {
+        // Suppress logs to avoid flood, or log error
+    } finally {
+        connection?.disconnect()
+        isUploadingFrame.set(false)
+    }
+}
+
+fun uploadAudioFrame(ip: String, port: String, passcode: String, audioBytes: ByteArray) {
+    if (ip.isEmpty() || port.isEmpty() || passcode.isEmpty()) return
+    var connection: java.net.HttpURLConnection? = null
+    try {
+        val url = java.net.URL("http://$ip:$port/upload-audio?passcode=$passcode")
+        connection = url.openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.connectTimeout = 1000
+        connection.readTimeout = 1000
+        connection.setFixedLengthStreamingMode(audioBytes.size)
+        connection.setRequestProperty("Content-Type", "application/octet-stream")
+        
+        connection.outputStream.use { os ->
+            os.write(audioBytes)
+            os.flush()
+        }
+        val responseCode = connection.responseCode
+        if (responseCode != java.net.HttpURLConnection.HTTP_OK) {
+            Log.e("CamLink", "Audio upload returned code: $responseCode")
+        }
+    } catch (e: Exception) {
+        // Suppress to avoid floods
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+fun toggleRemoteTorch(ip: String, port: String, passcode: String, onResponse: (Boolean) -> Unit) {
+    if (ip.isEmpty() || port.isEmpty() || passcode.isEmpty()) return
+    Thread {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            val url = java.net.URL("http://$ip:$port/toggle-torch?passcode=$passcode")
+            connection = url.openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 2000
+            connection.readTimeout = 2000
+            val responseCode = connection.responseCode
+            if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                val isTorchOn = responseText.contains("\"torchActive\":true")
+                onResponse(isTorchOn)
+            }
+        } catch (e: Exception) {
+            Log.e("CamLink", "Failed to toggle remote torch", e)
+        } finally {
+            connection?.disconnect()
+        }
+    }.start()
+}
+
+fun fetchRemoteStatus(ip: String, port: String, passcode: String, onComplete: (Boolean, Int) -> Unit) {
+    if (ip.isEmpty() || port.isEmpty() || passcode.isEmpty()) return
+    Thread {
+        var connection: java.net.HttpURLConnection? = null
+        try {
+            val url = java.net.URL("http://$ip:$port/status?passcode=$passcode")
+            connection = url.openConnection() as java.net.HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 2000
+            connection.readTimeout = 2000
+            val responseCode = connection.responseCode
+            if (responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                val isTorchOn = responseText.contains("\"torchActive\":true")
+                
+                val wifiPattern = "\"wifiSignal\":(\\d+)".toRegex()
+                val matchResult = wifiPattern.find(responseText)
+                val wifiSignal = matchResult?.groupValues?.get(1)?.toIntOrNull() ?: 4
+                
+                onComplete(isTorchOn, wifiSignal)
+            }
+        } catch (e: Exception) {
+            Log.e("CamLink", "Failed to fetch remote status", e)
+        } finally {
+            connection?.disconnect()
+        }
+    }.start()
+}
+
 // Native streaming helpers
 suspend fun streamMjpeg(
     urlStr: String,
@@ -2058,16 +3154,19 @@ suspend fun streamMjpeg(
             connection.readTimeout = 10000
             val inputStream = java.io.BufferedInputStream(connection.inputStream)
             
-            val byteStream = java.io.ByteArrayOutputStream()
+            val byteStream = java.io.ByteArrayOutputStream(128 * 1024)
             var inJpeg = false
             var prevByte = 0
+            var startIdx = 0
             
-            val tempBuf = ByteArray(4096)
+            val tempBuf = ByteArray(16384)
             while (isActive) {
                 val count = inputStream.read(tempBuf)
                 if (count == -1) break
                 
-                for (i in 0 until count) {
+                startIdx = 0
+                var i = 0
+                while (i < count) {
                     val b = tempBuf[i]
                     val bInt = b.toInt() and 0xFF
                     
@@ -2077,12 +3176,15 @@ suspend fun streamMjpeg(
                             byteStream.write(0xFF)
                             byteStream.write(0xD8)
                             inJpeg = true
-                        } else {
-                            byteStream.write(bInt)
+                            startIdx = i + 1
                         }
                     } else {
-                        byteStream.write(bInt)
                         if (prevByte == 0xFF && bInt == 0xD9) {
+                            val len = i - startIdx + 1
+                            if (len > 0) {
+                                byteStream.write(tempBuf, startIdx, len)
+                            }
+                            
                             val arr = byteStream.toByteArray()
                             try {
                                 val bitmap = BitmapFactory.decodeByteArray(arr, 0, arr.size)
@@ -2092,11 +3194,20 @@ suspend fun streamMjpeg(
                                     }
                                 }
                             } catch (e: Exception) {}
+                            
                             byteStream.reset()
                             inJpeg = false
+                            startIdx = i + 1
                         }
                     }
+                    
                     prevByte = bInt
+                    i++
+                }
+                
+                if (inJpeg && startIdx < count) {
+                    val len = count - startIdx
+                    byteStream.write(tempBuf, startIdx, len)
                 }
             }
         } catch (e: Exception) {
@@ -2110,6 +3221,7 @@ suspend fun streamMjpeg(
 suspend fun streamAudio(
     urlStr: String,
     audioPlayer: AudioPlayer,
+    isMuted: () -> Boolean,
     onError: (Exception) -> Unit
 ) {
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2147,7 +3259,9 @@ suspend fun streamAudio(
                 val read = inputStream.read(tempBuf)
                 if (read == -1) break
                 val chunk = tempBuf.copyOf(read)
-                audioPlayer.write(chunk)
+                if (!isMuted()) {
+                    audioPlayer.write(chunk)
+                }
             }
         } catch (e: Exception) {
             onError(e)
@@ -2296,4 +3410,285 @@ fun QrScannerDialog(
             }
         }
     }
+}
+
+@Composable
+fun AppInstallQrDialog(
+    localIp: String,
+    serverPort: Int,
+    onDismissRequest: () -> Unit
+) {
+    val context = LocalContext.current
+    var selectedTab by remember { mutableStateOf(0) } // 0: Yerel Wi-Fi (Çevrimdışı), 1: PC Python (.py), 2: Bulut / İnternet (Yedek)
+    
+    val localApkUrl = "http://$localIp:$serverPort/download-apk"
+    val pythonUrl = "http://$localIp:$serverPort/download-python"
+    val cloudApkUrl = "https://ais-pre-nm65enh3hhn5vonqetm42c-26636727861.europe-west2.run.app/.build-outputs/app-debug.apk"
+    
+    val activeUrl = when (selectedTab) {
+        0 -> localApkUrl
+        1 -> pythonUrl
+        else -> cloudApkUrl
+    }
+    
+    // Generate the QR code bitmap using the existing helper function
+    val qrBitmap = remember(activeUrl) {
+        generateQrCode(activeUrl, 512)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.QrCode,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    text = "İndirme & Kurulum QR",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = Color.White
+                )
+            }
+        },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Dynamic choice chips / tabs
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Yerel Ağ
+                    Surface(
+                        onClick = { selectedTab = 0 },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedTab == 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (selectedTab == 0) MaterialTheme.colorScheme.primary else Color(0xFF4F378B)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Yerel APK",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = if (selectedTab == 0) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                            Text(
+                                text = "Wi-Fi (Hızlı)",
+                                fontSize = 8.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+
+                    // PC Python
+                    Surface(
+                        onClick = { selectedTab = 1 },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedTab == 1) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (selectedTab == 1) MaterialTheme.colorScheme.primary else Color(0xFF4F378B)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "PC Python",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = if (selectedTab == 1) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                            Text(
+                                text = "Script (.py)",
+                                fontSize = 8.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+
+                    // Bulut / İnternet
+                    Surface(
+                        onClick = { selectedTab = 2 },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selectedTab == 2) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (selectedTab == 2) MaterialTheme.colorScheme.primary else Color(0xFF4F378B)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Bulut APK",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = if (selectedTab == 2) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                            Text(
+                                text = "Yedek Sunucu",
+                                fontSize = 8.sp,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+                }
+
+                val helperText = when (selectedTab) {
+                    0 -> "Bu QR kodu diğer telefonun kamerasıyla taratarak uygulamayı bu telefondan yerel Wi-Fi üzerinden doğrudan (.apk) indirin. İki cihazın da aynı Wi-Fi ağına bağlı olması gerekir."
+                    1 -> "Bu QR kodu bilgisayarınızın kamerasıyla taratarak, bilgisayarınızdaki webcam görüntüsünü ve kamerasını anında bu telefona aktaran 'camlink.py' python scriptini indirin."
+                    else -> "Uygulamayı internet üzerinden bulut sunucusundan indirmek için bu QR kodu taratın."
+                }
+
+                Text(
+                    text = helperText,
+                    fontSize = 11.sp,
+                    color = Color(0xFFC4C4C4),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                // QR Code Display Card
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                    modifier = Modifier
+                        .size(200.dp)
+                        .padding(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "QR Code",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                            )
+                        } else {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Copy Link section
+                Surface(
+                    color = Color(0xFF1C1B1F),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFF381E72)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (selectedTab) {
+                                    0 -> "Yerel APK Linki"
+                                    1 -> "PC Python Script Linki"
+                                    else -> "Doğrudan Bulut Linki"
+                                },
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = activeUrl,
+                                fontSize = 10.sp,
+                                color = Color.Gray,
+                                maxLines = 1,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("APK Link", activeUrl)
+                                clipboardManager.setPrimaryClip(clip)
+                                Toast.makeText(context, "Bağlantı kopyalandı!", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Link Kopyala",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    try {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(activeUrl))
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Hata: Tarayıcı açılamadı.", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = if (selectedTab == 1) "Scripti İndir" else "Şimdi İndir",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Kapat", color = Color.Gray)
+            }
+        },
+        containerColor = Color(0xFF2B2930),
+        shape = RoundedCornerShape(24.dp)
+    )
 }

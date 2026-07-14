@@ -27,8 +27,53 @@ class CameraCapturer(private val context: Context) {
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
     private var isFrontCamera = false
+    fun isFrontCameraActive(): Boolean = isFrontCamera
     private var isVirtualRunning = false
     private var virtualThread: Thread? = null
+    private var isCaptureRunning = false
+    private var activeCamera: androidx.camera.core.Camera? = null
+    private var isTorchEnabled = false
+
+    private var previousGrid: ByteArray? = null
+    private val gridWidth = 32
+    private val gridHeight = 24
+
+    private var sensorManager: android.hardware.SensorManager? = null
+    private var accelerometer: android.hardware.Sensor? = null
+    private var lastAccelX = 0f
+    private var lastAccelY = 0f
+    private var lastAccelZ = 0f
+    private var lastPhoneMoveTime = 0L
+
+    private val sensorListener = object : android.hardware.SensorEventListener {
+        override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+            if (event == null) return
+            val x = event.values[0]
+            val y = event.values[1]
+            val z = event.values[2]
+            
+            if (lastAccelX != 0f || lastAccelY != 0f || lastAccelZ != 0f) {
+                val dx = x - lastAccelX
+                val dy = y - lastAccelY
+                val dz = z - lastAccelZ
+                val delta = Math.sqrt((dx*dx + dy*dy + dz*dz).toDouble()).toFloat()
+                
+                // If acceleration change is above 0.35 m/s², the phone is physically moving!
+                if (delta > 0.35f) {
+                    lastPhoneMoveTime = System.currentTimeMillis()
+                }
+            }
+            lastAccelX = x
+            lastAccelY = y
+            lastAccelZ = z
+        }
+        override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+    }
+
+    private fun isPhoneMovingRecently(): Boolean {
+        // If the phone was physically moved within the last 2 seconds (2000 ms), return true
+        return (System.currentTimeMillis() - lastPhoneMoveTime) < 2000
+    }
 
     interface FrameCallback {
         fun onFrame(jpegBytes: ByteArray)
@@ -181,6 +226,18 @@ class CameraCapturer(private val context: Context) {
         callback: FrameCallback
     ) {
         stop() // Clean up any active sessions first
+        isCaptureRunning = true
+
+        // Register accelerometer to detect physical movement
+        try {
+            sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+            accelerometer = sensorManager?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+            accelerometer?.let {
+                sensorManager?.registerListener(sensorListener, it, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        } catch (e: Exception) {
+            Log.e("CameraCapturer", "Error registering accelerometer: ", e)
+        }
 
         if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             Log.w("CameraCapturer", "Kamera izni henüz verilmedi. Başlatılamıyor. Sanal kameraya geçiliyor.")
@@ -191,6 +248,13 @@ class CameraCapturer(private val context: Context) {
         try {
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
             cameraProviderFuture.addListener({
+                if (!isCaptureRunning) {
+                    try {
+                        val provider = cameraProviderFuture.get()
+                        provider.unbindAll()
+                    } catch (e: Exception) {}
+                    return@addListener
+                }
                 try {
                     val provider = cameraProviderFuture.get()
                     cameraProvider = provider
@@ -237,7 +301,9 @@ class CameraCapturer(private val context: Context) {
         previewView: androidx.camera.view.PreviewView?,
         callback: FrameCallback
     ) {
+        val targetSize = if (lowDataMode) android.util.Size(320, 240) else android.util.Size(640, 480)
         val imageAnalysis = ImageAnalysis.Builder()
+            .setTargetResolution(targetSize)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
 
@@ -245,6 +311,52 @@ class CameraCapturer(private val context: Context) {
 
         imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
             try {
+                // Perform real-time motion detection on downsampled grid
+                val planes = imageProxy.planes
+                if (planes.isNotEmpty()) {
+                    val yBuffer = planes[0].buffer
+                    val yWidth = imageProxy.width
+                    val yHeight = imageProxy.height
+                    val yRowStride = planes[0].rowStride
+                    
+                    val currentGrid = ByteArray(gridWidth * gridHeight)
+                    val cellWidth = yWidth / gridWidth
+                    val cellHeight = yHeight / gridHeight
+                    
+                    if (cellWidth > 0 && cellHeight > 0) {
+                        for (gy in 0 until gridHeight) {
+                            for (gx in 0 until gridWidth) {
+                                val py = gy * cellHeight + cellHeight / 2
+                                val px = gx * cellWidth + cellWidth / 2
+                                val index = py * yRowStride + px
+                                if (index < yBuffer.capacity()) {
+                                    currentGrid[gy * gridWidth + gx] = yBuffer.get(index)
+                                }
+                            }
+                        }
+                        
+                        val prev = previousGrid
+                        if (prev != null) {
+                            var diffSum = 0
+                            for (i in currentGrid.indices) {
+                                val prevVal = prev[i].toInt() and 0xFF
+                                val currVal = currentGrid[i].toInt() and 0xFF
+                                diffSum += Math.abs(currVal - prevVal)
+                            }
+                            val avgDiff = diffSum.toFloat() / currentGrid.size
+                            
+                            // A difference threshold of 2.5 units is highly sensitive for subtle baby movements.
+                            if (avgDiff > 2.5f) {
+                                // Exclude the camera's own movement!
+                                if (!isPhoneMovingRecently()) {
+                                    StreamingService.activeServer?.triggerMotion()
+                                }
+                            }
+                        }
+                        previousGrid = currentGrid
+                    }
+                }
+
                 val jpeg = imageProxyToJpeg(imageProxy, quality)
                 if (jpeg != null) {
                     callback.onFrame(jpeg)
@@ -259,14 +371,14 @@ class CameraCapturer(private val context: Context) {
         if (previewView != null) {
             val preview = androidx.camera.core.Preview.Builder().build()
             preview.setSurfaceProvider(previewView.surfaceProvider)
-            provider.bindToLifecycle(
+            activeCamera = provider.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
                 preview,
                 imageAnalysis
             )
         } else {
-            provider.bindToLifecycle(
+            activeCamera = provider.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
                 imageAnalysis
@@ -274,17 +386,46 @@ class CameraCapturer(private val context: Context) {
         }
     }
 
+    fun setTorchEnabled(enabled: Boolean) {
+        isTorchEnabled = enabled
+        try {
+            activeCamera?.cameraControl?.enableTorch(enabled)
+        } catch (e: Exception) {
+            Log.e("CameraCapturer", "Error setting torch to $enabled: ", e)
+        }
+    }
+
+    fun isTorchOn(): Boolean {
+        return isTorchEnabled
+    }
+
     fun stop() {
+        isCaptureRunning = false
+        activeCamera = null
         stopVirtualCamera()
+
+        // Unregister accelerometer
+        try {
+            sensorManager?.unregisterListener(sensorListener)
+        } catch (e: Exception) {}
+        sensorManager = null
+        accelerometer = null
+        previousGrid = null
+
         try {
             val provider = cameraProvider
             if (provider != null) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                val stopAction = Runnable {
                     try {
                         provider.unbindAll()
                     } catch (e: Exception) {
-                        Log.e("CameraCapturer", "Error unbinding camera use cases on main thread", e)
+                        Log.e("CameraCapturer", "Error unbinding camera use cases", e)
                     }
+                }
+                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                    stopAction.run()
+                } else {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post(stopAction)
                 }
             }
         } catch (e: Exception) {
@@ -311,48 +452,151 @@ class CameraCapturer(private val context: Context) {
         val height = image.height
         val rotationDegrees = image.imageInfo.rotationDegrees
 
+        val nv21Bytes = toNV21(image)
+        val rotatedBytes = rotateNV21(nv21Bytes, width, height, rotationDegrees, isFrontCamera)
+
+        val is90or270 = rotationDegrees == 90 || rotationDegrees == 270
+        val newWidth = if (is90or270) height else width
+        val newHeight = if (is90or270) width else height
+
         val out = ByteArrayOutputStream()
         val yuvImage = YuvImage(
-            toNV21(image),
+            rotatedBytes,
             ImageFormat.NV21,
-            width,
-            height,
+            newWidth,
+            newHeight,
             null
         )
-        yuvImage.compressToJpeg(Rect(0, 0, width, height), quality, out)
-        val jpegBytes = out.toByteArray()
+        yuvImage.compressToJpeg(Rect(0, 0, newWidth, newHeight), quality, out)
+        return out.toByteArray()
+    }
 
-        // Apply rotation and mirroring to make sure the streamed video is upright and correctly mirrored
-        if (rotationDegrees != 0 || isFrontCamera) {
-            try {
-                val originalBitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-                if (originalBitmap != null) {
-                    val matrix = Matrix().apply {
-                        if (rotationDegrees != 0) {
-                            postRotate(rotationDegrees.toFloat())
-                        }
-                        if (isFrontCamera) {
-                            postScale(-1f, 1f) // Mirror horizontally for front camera
-                        }
-                    }
-                    val rotatedBitmap = Bitmap.createBitmap(
-                        originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true
-                    )
-                    val rotatedOut = ByteArrayOutputStream()
-                    rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, rotatedOut)
+    private fun rotateNV21(data: ByteArray, width: Int, height: Int, rotation: Int, mirror: Boolean): ByteArray {
+        val normalizedRotation = when (rotation) {
+            90, 180, 270 -> rotation
+            else -> 0
+        }
+        if (normalizedRotation == 0 && !mirror) return data
 
-                    originalBitmap.recycle()
-                    if (rotatedBitmap != originalBitmap) {
-                        rotatedBitmap.recycle()
+        val rotated = ByteArray(data.size)
+        val ySize = width * height
+        
+        val is90or270 = normalizedRotation == 90 || normalizedRotation == 270
+        val newWidth = if (is90or270) height else width
+        val newHeight = if (is90or270) width else height
+
+        when (normalizedRotation) {
+            90 -> {
+                // 90 degrees clockwise with horizontal mirroring support
+                for (y in 0 until height) {
+                    val yStride = y * width
+                    for (x in 0 until width) {
+                        val srcIdx = yStride + x
+                        val destX = if (mirror) y else height - 1 - y
+                        val destY = x
+                        rotated[destY * newWidth + destX] = data[srcIdx]
                     }
-                    return rotatedOut.toByteArray()
                 }
-            } catch (e: Exception) {
-                Log.e("CameraCapturer", "Error rotating image proxy bitmap", e)
+                
+                // 90 degrees UV with horizontal mirroring support
+                val halfWidth = width / 2
+                val halfHeight = height / 2
+                for (y in 0 until halfHeight) {
+                    val yStride = ySize + y * width
+                    for (x in 0 until halfWidth) {
+                        val srcIdx = yStride + x * 2
+                        val destX = if (mirror) y else halfHeight - 1 - y
+                        val destY = x
+                        val destIdx = ySize + destY * newWidth + destX * 2
+                        rotated[destIdx] = data[srcIdx]
+                        rotated[destIdx + 1] = data[srcIdx + 1]
+                    }
+                }
+            }
+            180 -> {
+                // 180 degrees with horizontal mirroring support
+                for (y in 0 until height) {
+                    val yStride = y * width
+                    val destY = height - 1 - y
+                    val destYStride = destY * newWidth
+                    for (x in 0 until width) {
+                        val srcIdx = yStride + x
+                        val destX = if (mirror) x else width - 1 - x
+                        rotated[destYStride + destX] = data[srcIdx]
+                    }
+                }
+                
+                // 180 degrees UV with horizontal mirroring support
+                val halfWidth = width / 2
+                val halfHeight = height / 2
+                for (y in 0 until halfHeight) {
+                    val yStride = ySize + y * width
+                    val destY = halfHeight - 1 - y
+                    val destYStride = ySize + destY * newWidth
+                    for (x in 0 until halfWidth) {
+                        val srcIdx = yStride + x * 2
+                        val destX = if (mirror) x else halfWidth - 1 - x
+                        val destIdx = destYStride + destX * 2
+                        rotated[destIdx] = data[srcIdx]
+                        rotated[destIdx + 1] = data[srcIdx + 1]
+                    }
+                }
+            }
+            270 -> {
+                // 270 degrees with horizontal mirroring support
+                for (y in 0 until height) {
+                    val yStride = y * width
+                    for (x in 0 until width) {
+                        val srcIdx = yStride + x
+                        val destX = if (mirror) height - 1 - y else y
+                        val destY = width - 1 - x
+                        rotated[destY * newWidth + destX] = data[srcIdx]
+                    }
+                }
+                
+                // 270 degrees UV with horizontal mirroring support
+                val halfWidth = width / 2
+                val halfHeight = height / 2
+                for (y in 0 until halfHeight) {
+                    val yStride = ySize + y * width
+                    for (x in 0 until halfWidth) {
+                        val srcIdx = yStride + x * 2
+                        val destX = if (mirror) halfHeight - 1 - y else y
+                        val destY = halfWidth - 1 - x
+                        val destIdx = ySize + destY * newWidth + destX * 2
+                        rotated[destIdx] = data[srcIdx]
+                        rotated[destIdx + 1] = data[srcIdx + 1]
+                    }
+                }
+            }
+            else -> {
+                // 0 degrees with mirror
+                for (y in 0 until height) {
+                    val yStride = y * width
+                    for (x in 0 until width) {
+                        val srcIdx = yStride + x
+                        val destX = width - 1 - x
+                        rotated[y * newWidth + destX] = data[srcIdx]
+                    }
+                }
+                
+                // 0 degrees UV with mirror
+                val halfWidth = width / 2
+                val halfHeight = height / 2
+                for (y in 0 until halfHeight) {
+                    val yStride = ySize + y * width
+                    for (x in 0 until halfWidth) {
+                        val srcIdx = yStride + x * 2
+                        val destX = halfWidth - 1 - x
+                        val destIdx = ySize + y * newWidth + destX * 2
+                        rotated[destIdx] = data[srcIdx]
+                        rotated[destIdx + 1] = data[srcIdx + 1]
+                    }
+                }
             }
         }
-
-        return jpegBytes
+        
+        return rotated
     }
 
     private fun toNV21(image: ImageProxy): ByteArray {

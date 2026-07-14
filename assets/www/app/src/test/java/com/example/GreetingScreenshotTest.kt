@@ -19,6 +19,15 @@ class GreetingScreenshotTest {
 
   @get:Rule val composeTestRule = createComposeRule()
 
+  @androidx.compose.runtime.Composable
+  fun Greeting(name: String) {
+    androidx.compose.material3.Text(
+      text = "Hello $name!",
+      color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+      style = androidx.compose.material3.MaterialTheme.typography.headlineMedium
+    )
+  }
+
   @Test
   fun greeting_screenshot() {
     composeTestRule.setContent { MyApplicationTheme { Greeting("Robolectric") } }

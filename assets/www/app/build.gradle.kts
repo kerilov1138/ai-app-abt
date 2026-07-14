@@ -15,7 +15,8 @@ android {
 
   defaultConfig {
     applicationId = "com.aistudio.camlink.fquwdq"
-    minSdk = 24
+    minSdk = 23
+    multiDexEnabled = true
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
